@@ -2,13 +2,13 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
-import 'package:hikari_novel_flutter/models/content.dart';
-import 'package:hikari_novel_flutter/next/cache.dart';
-import 'package:hikari_novel_flutter/next/read_state.dart';
+import 'package:ark_novel/models/content.dart';
+import 'package:ark_novel/next/cache.dart';
+import 'package:ark_novel/next/read_state.dart';
 
 void main() {
   setUpAll(() async {
-    Hive.init(Directory.systemTemp.createTempSync('hikari_chapter_test').path);
+    Hive.init(Directory.systemTemp.createTempSync('ark_chapter_test').path);
     await Hive.openBox('session');
     // 旧格式的原文：打开后照样能读，压一遍之后变成 gzip
     final old = await Hive.openLazyBox('chapters');

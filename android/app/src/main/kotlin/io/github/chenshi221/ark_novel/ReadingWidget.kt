@@ -1,4 +1,4 @@
-package pers.cyh128.hikari_novel
+package io.github.chenshi221.ark_novel
 
 import android.appwidget.AppWidgetManager
 import android.content.Context
@@ -45,7 +45,7 @@ class ReadingWidget : HomeWidgetProvider() {
                 views.setViewVisibility(R.id.widget_icon, View.GONE)
             }
             views.setViewVisibility(R.id.widget_empty, if (bitmaps.isEmpty()) View.VISIBLE else View.GONE)
-            views.setOnClickPendingIntent(android.R.id.background, launch(context, "hikari://shelf"))
+            views.setOnClickPendingIntent(android.R.id.background, launch(context, "ark://shelf"))
             covers.forEachIndexed { i, coverId ->
                 if (i >= bitmaps.size) {
                     // 不够 4 本：占着位置但不显示，封面大小不变
@@ -56,7 +56,7 @@ class ReadingWidget : HomeWidgetProvider() {
                 views.setViewVisibility(coverId, View.VISIBLE)
                 val bmp = bitmaps[i]
                 if (bmp != null) views.setImageViewBitmap(coverId, bmp) else views.setImageViewResource(coverId, R.mipmap.launcher_icon)
-                views.setOnClickPendingIntent(coverId, launch(context, "hikari://reader/${b.getString("aid")}/${b.getString("cid")}"))
+                views.setOnClickPendingIntent(coverId, launch(context, "ark://reader/${b.getString("aid")}/${b.getString("cid")}"))
             }
             appWidgetManager.updateAppWidget(id, views)
         }

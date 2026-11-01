@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/bangumi.dart';
+import 'package:ark_novel/next/bangumi.dart';
 
 List<({String name, String img})> bgm(List<String> names) => [for (final n in names) (name: n, img: 'img:$n')];
 

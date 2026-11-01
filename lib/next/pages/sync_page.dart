@@ -63,7 +63,7 @@ class _SyncPageState extends ConsumerState<SyncPage> {
 
   /// 导出：把本机数据存成一个 JSON 交给系统分享（发给自己、存到文件都行）。
   Future<void> _export() async {
-    final file = File('${(await getTemporaryDirectory()).path}/hikari_backup.json');
+    final file = File('${(await getTemporaryDirectory()).path}/ark_novel_backup.json');
     await file.writeAsString(jsonEncode(Sync.snapshot()));
     await SharePlus.instance.share(ShareParams(files: [XFile(file.path)]));
   }

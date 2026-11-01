@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/rules.dart';
+import 'package:ark_novel/next/rules.dart';
 
 void main() {
   test('按顺序套用规则，支持分组引用', () {

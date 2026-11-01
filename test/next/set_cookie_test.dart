@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/net_io.dart';
+import 'package:ark_novel/next/net_io.dart';
 
 void main() {
   test('系统网络栈合并成一条的 Set-Cookie 拆回多条，expires 里的逗号不拆', () {

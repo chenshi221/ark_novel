@@ -1,4 +1,4 @@
-package pers.cyh128.hikari_novel
+package io.github.chenshi221.ark_novel
 
 import android.content.Context
 import android.graphics.Bitmap

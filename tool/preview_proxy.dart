@@ -8,7 +8,7 @@
 //   PREVIEW_BIND    监听地址，默认 0.0.0.0（建议填 Tailscale 地址，只让自己的设备访问）
 //   PREVIEW_PORT    监听端口，默认 8091（网页版默认会连同一台机器的 8091）
 //   WENKU8_TARGET   转发目标，默认 https://www.wenku8.cc
-//   PREVIEW_STATE   cookie 保存位置，默认 ~/.hikari_preview_session.json
+//   PREVIEW_STATE   cookie 保存位置，默认 ~/.ark_preview_session.json
 //   https_proxy     需要的话，转发时走的上游代理
 import 'dart:convert';
 import 'dart:io';
@@ -20,7 +20,7 @@ const _imageHosts = ['wenku8.com', 'wenku8.net', 'wenku8.cc', '777743.xyz'];
 
 final _env = Platform.environment;
 final Uri _target = Uri.parse(_env['WENKU8_TARGET'] ?? 'https://www.wenku8.cc');
-final File _stateFile = File(_env['PREVIEW_STATE'] ?? '${_env['HOME']}/.hikari_preview_session.json');
+final File _stateFile = File(_env['PREVIEW_STATE'] ?? '${_env['HOME']}/.ark_preview_session.json');
 final Map<String, String> _cookies = {};
 
 final HttpClient _http = HttpClient()

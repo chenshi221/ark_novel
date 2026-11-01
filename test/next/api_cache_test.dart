@@ -4,12 +4,12 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:enough_convert/enough_convert.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_client.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_exceptions.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_urls.dart';
-import 'package:hikari_novel_flutter/models/common/charset_type.dart';
-import 'package:hikari_novel_flutter/next/cache.dart';
-import 'package:hikari_novel_flutter/next/data.dart';
+import 'package:ark_novel/data/wenku8/wenku8_client.dart';
+import 'package:ark_novel/data/wenku8/wenku8_exceptions.dart';
+import 'package:ark_novel/data/wenku8/wenku8_urls.dart';
+import 'package:ark_novel/models/common/charset_type.dart';
+import 'package:ark_novel/next/cache.dart';
+import 'package:ark_novel/next/data.dart';
 import 'package:hive_ce/hive.dart';
 
 /// 按顺序返回预设响应的假适配器（状态码 + 页面）。
@@ -33,7 +33,7 @@ void main() {
   late Api api;
 
   setUpAll(() async {
-    Hive.init(Directory.systemTemp.createTempSync('hikari_test').path);
+    Hive.init(Directory.systemTemp.createTempSync('ark_test').path);
     await ChapterCache.open();
   });
 

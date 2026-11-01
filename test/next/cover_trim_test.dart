@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/cover_trim.dart';
+import 'package:ark_novel/next/cover_trim.dart';
 
 /// [w]×[h] 的图：[inside] 里是深色的"封面"，外面是白底
 CoverPixels _image(int w, int h, Rect inside) {

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/pages/stats_page.dart';
+import 'package:ark_novel/next/pages/stats_page.dart';
 
 void main() {
   test('连续阅读天数：今天没读从昨天数，断一天就停', () {

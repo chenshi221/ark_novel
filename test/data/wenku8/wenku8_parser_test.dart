@@ -1,8 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_exceptions.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_parser.dart';
+import 'package:ark_novel/data/wenku8/wenku8_exceptions.dart';
+import 'package:ark_novel/data/wenku8/wenku8_parser.dart';
 
 String fixture(String name) => File('test/data/wenku8/fixtures/$name').readAsStringSync();
 

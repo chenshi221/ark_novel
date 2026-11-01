@@ -27,7 +27,8 @@ class Sync {
 
   static String get url => (_box.get('sync:url') as String?) ?? 'https://dav.jianguoyun.com/dav/';
   static String get user => (_box.get('sync:user') as String?) ?? '';
-  static String get folder => (_box.get('sync:folder') as String?) ?? 'hikari';
+  static const defaultFolder = 'ArkNovel';
+  static String get folder => (_box.get('sync:folder') as String?) ?? defaultFolder;
   static int get lastSync => (_box.get('sync:last') as int?) ?? 0;
   static bool get configured => user.isNotEmpty;
 
@@ -41,7 +42,7 @@ class Sync {
   }
 
   static Future<void> save({required String url, required String user, required String pass, required String folder}) async {
-    await _box.putAll({'sync:url': url.trim(), 'sync:user': user.trim(), 'sync:folder': folder.trim().isEmpty ? 'hikari' : folder.trim()});
+    await _box.putAll({'sync:url': url.trim(), 'sync:user': user.trim(), 'sync:folder': folder.trim().isEmpty ? defaultFolder : folder.trim()});
     try {
       await _secure.write(key: 'syncPass', value: pass);
       await _box.delete('sync:pass');

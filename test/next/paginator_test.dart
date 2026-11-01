@@ -1,8 +1,8 @@
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/reader/paginator.dart';
-import 'package:hikari_novel_flutter/next/reader/reader_body.dart' show readerStrut;
-import 'package:hikari_novel_flutter/next/reader/reader_page.dart' show formatChapter, halfWidth;
+import 'package:ark_novel/next/reader/paginator.dart';
+import 'package:ark_novel/next/reader/reader_body.dart' show readerStrut;
+import 'package:ark_novel/next/reader/reader_page.dart' show formatChapter, halfWidth;
 
 void main() {
   const style = TextStyle(fontSize: 16, height: 1.5);

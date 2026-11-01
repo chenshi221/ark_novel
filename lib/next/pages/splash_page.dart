@@ -17,9 +17,9 @@ class SplashPage extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Image.asset('assets/images/logo_transparent.png', height: 96),
+                ClipRRect(borderRadius: BorderRadius.circular(24), child: Image.asset('assets/images/logo.png', height: 96)),
                 const SizedBox(height: 24),
-                Text('Hikari Novel', style: theme.textTheme.headlineMedium),
+                Text('Ark Novel', style: theme.textTheme.headlineMedium),
                 const SizedBox(height: 32),
                 SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2.5, color: theme.colorScheme.primary)),
               ],

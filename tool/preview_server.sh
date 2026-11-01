@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 在服务器上启动网页预览（热重载）：
-#   tmux 会话 hikari 里开三个窗口：
+#   tmux 会话 ark 里开三个窗口：
 #     app    flutter run 网页开发服务器（端口 8090）
 #     proxy  wenku8 转发程序（端口 8091）
 #     watch  每 15 秒检查一次 GitHub，有新提交就拉取并热重载
@@ -23,10 +23,10 @@ if [[ "${1:-}" == "--watch" ]]; then
     if grep -qE '^(pubspec\.yaml|tool/preview_proxy\.dart)$' <<<"$changed"; then
       # 依赖或转发程序变了：热重载不够，整体重启
       # 重启会关掉当前 tmux 会话（包括这个窗口），所以放到会话外面执行
-      setsid nohup bash "$REPO/tool/preview_server.sh" "$BIND" >/tmp/hikari_preview_restart.log 2>&1 &
+      setsid nohup bash "$REPO/tool/preview_server.sh" "$BIND" >/tmp/ark_preview_restart.log 2>&1 &
       exit 0
     fi
-    tmux send-keys -t hikari:app "${RELOAD_KEY:-r}"
+    tmux send-keys -t ark:app "${RELOAD_KEY:-r}"
   done
 fi
 
@@ -35,7 +35,7 @@ FLUTTER="${FLUTTER_HOME:?请设置 FLUTTER_HOME}/bin/flutter"
 DART="${FLUTTER_HOME}/bin/dart"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 BRANCH="$(git -C "$REPO" rev-parse --abbrev-ref HEAD)"
-SESSION=hikari
+SESSION=ark
 
 APP_CMD="cd '$REPO' && '$FLUTTER' run -d web-server -t lib/next/main.dart --web-hostname '$BIND' --web-port 8090"
 PROXY_CMD="cd '$REPO' && PREVIEW_BIND='$BIND' PREVIEW_PORT=8091 '$DART' run tool/preview_proxy.dart"

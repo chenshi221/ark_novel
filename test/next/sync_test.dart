@@ -3,16 +3,16 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
-import 'package:hikari_novel_flutter/next/bookmarks.dart';
-import 'package:hikari_novel_flutter/next/rules.dart';
-import 'package:hikari_novel_flutter/next/stats.dart';
-import 'package:hikari_novel_flutter/next/sync.dart';
+import 'package:ark_novel/next/bookmarks.dart';
+import 'package:ark_novel/next/rules.dart';
+import 'package:ark_novel/next/stats.dart';
+import 'package:ark_novel/next/sync.dart';
 
 void main() {
   late Box box;
 
   setUpAll(() async {
-    Hive.init(Directory.systemTemp.createTempSync('hikari_sync_test').path);
+    Hive.init(Directory.systemTemp.createTempSync('ark_sync_test').path);
     box = await Hive.openBox('session');
   });
 
@@ -121,7 +121,7 @@ void main() {
   });
 
   test('解析 PROPFIND 返回的文件名', () {
-    const xml = '<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/hikari/</d:href></d:response><d:response><d:href>/dav/hikari/d1%20a.json</d:href></d:response></d:multistatus>';
+    const xml = '<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/ArkNovel/</d:href></d:response><d:response><d:href>/dav/ArkNovel/d1%20a.json</d:href></d:response></d:multistatus>';
     expect(Sync.parseListing(xml), ['d1 a.json']);
   });
 
@@ -135,12 +135,12 @@ void main() {
       final res = req.response;
       if (req.headers.value('authorization') != 'Basic ${base64Encode(utf8.encode('me:secret'))}') {
         res.statusCode = 401;
-      } else if (req.method == 'PROPFIND' && path == '/dav/hikari/') {
+      } else if (req.method == 'PROPFIND' && path == '/dav/ArkNovel/') {
         if (!folderMade) {
           res.statusCode = 404;
         } else {
           res.statusCode = 207;
-          res.write('<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/hikari/</d:href></d:response>${[for (final k in files.keys) '<d:response><d:href>/dav/hikari/$k</d:href></d:response>'].join()}</d:multistatus>');
+          res.write('<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/ArkNovel/</d:href></d:response>${[for (final k in files.keys) '<d:response><d:href>/dav/ArkNovel/$k</d:href></d:response>'].join()}</d:multistatus>');
         }
       } else if (req.method == 'MKCOL') {
         folderMade = true;
@@ -159,7 +159,7 @@ void main() {
     files['other.json'] = jsonEncode(remote(extra: {
       'progress': {'7': ['c', 3, 5000]},
     }));
-    await Sync.save(url: 'http://127.0.0.1:${server.port}/dav/', user: 'me', pass: 'secret', folder: 'hikari');
+    await Sync.save(url: 'http://127.0.0.1:${server.port}/dav/', user: 'me', pass: 'secret', folder: 'ArkNovel');
     await box.put('progress:1', ['a', 1, 100]);
 
     expect(await Sync.run(), 1);
@@ -167,7 +167,7 @@ void main() {
     expect(files.keys.where((k) => k != 'other.json').length, 1);
     expect(jsonDecode(files['${Sync.deviceId}.json']!)['progress']['1'], ['a', 1, 100]);
 
-    await Sync.save(url: 'http://127.0.0.1:${server.port}/dav/', user: 'me', pass: 'wrong', folder: 'hikari');
+    await Sync.save(url: 'http://127.0.0.1:${server.port}/dav/', user: 'me', pass: 'wrong', folder: 'ArkNovel');
     await expectLater(Sync.run(), throwsA(contains('应用密码')));
     await server.close(force: true);
   });
