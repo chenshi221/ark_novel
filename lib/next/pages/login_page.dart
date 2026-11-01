@@ -103,7 +103,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Image.asset('assets/images/logo_transparent.png', height: 72, alignment: Alignment.centerLeft),
+                  Align(alignment: Alignment.centerLeft, child: ClipRRect(borderRadius: BorderRadius.circular(18), child: Image.asset('assets/images/logo.png', height: 72))),
                   const SizedBox(height: 28),
                   Text('登录', style: theme.textTheme.displaySmall),
                   const SizedBox(height: 10),

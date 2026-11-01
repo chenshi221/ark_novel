@@ -98,18 +98,21 @@ flutter:
       fonts:
         - asset: assets/fonts/NotoSerifSC.otf
 
+# 图标和启动图的源文件在 tool/icon/（SVG），改完先 node tool/icon/render.js 再跑下面两个命令
 # dart run flutter_native_splash:create
 flutter_native_splash:
-  color: "#ffffff"
-  image: assets/images/logo_transparent.png
-  color_dark: "#121212"
-  image_dark: assets/images/logo_transparent.png
+  color: "#F3EDE1"
+  image: tool/icon/logo_transparent.png
+  color_dark: "#1B2233"
+  image_dark: tool/icon/logo_transparent_dark.png
 
   android_12:
-    image: assets/images/logo_transparent.png
-    icon_background_color: "#ffffff"
-    image_dark: assets/images/logo_transparent.png
-    icon_background_color_dark: "#121212"
+    image: tool/icon/logo_transparent.png
+    color: "#F3EDE1"
+    icon_background_color: "#F3EDE1"
+    image_dark: tool/icon/logo_transparent_dark.png
+    color_dark: "#1B2233"
+    icon_background_color_dark: "#1B2233"
 
   web: false
 
@@ -117,9 +120,8 @@ flutter_native_splash:
 flutter_launcher_icons:
   android: "launcher_icon"
   image_path: "assets/images/logo.png"
-  min_sdk_android: 21 # android min sdk min:16, default 21
-  web:
-    generate: true
-    image_path: "assets/images/logo.png"
-    background_color: "#hexcode"
-    theme_color: "#hexcode"
+  adaptive_icon_background: "#F3EDE1"
+  adaptive_icon_foreground: "tool/icon/logo_foreground.png"
+  adaptive_icon_monochrome: "tool/icon/logo_monochrome.png"
+  adaptive_icon_foreground_inset: 0  # 前景 SVG 本身已按自适应图标安全区留好边距
+  min_sdk_android: 21
