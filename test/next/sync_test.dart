@@ -3,16 +3,16 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
-import 'package:hikari_novel_flutter/next/bookmarks.dart';
-import 'package:hikari_novel_flutter/next/rules.dart';
-import 'package:hikari_novel_flutter/next/stats.dart';
-import 'package:hikari_novel_flutter/next/sync.dart';
+import 'package:ark_novel/next/bookmarks.dart';
+import 'package:ark_novel/next/rules.dart';
+import 'package:ark_novel/next/stats.dart';
+import 'package:ark_novel/next/sync.dart';
 
 void main() {
   late Box box;
 
   setUpAll(() async {
-    Hive.init(Directory.systemTemp.createTempSync('hikari_sync_test').path);
+    Hive.init(Directory.systemTemp.createTempSync('ark_sync_test').path);
     box = await Hive.openBox('session');
   });
 

@@ -440,7 +440,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
   void _snack(String t) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
 
   Future<void> _exportBackup() async {
-    final file = File('${(await getTemporaryDirectory()).path}/hikari_backup.json');
+    final file = File('${(await getTemporaryDirectory()).path}/ark_novel_backup.json');
     await file.writeAsString(Backup.make());
     await SharePlus.instance.share(ShareParams(files: [XFile(file.path)]));
   }
@@ -547,7 +547,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
           subtitle: '指纹、面容或锁屏密码',
           value: _prefs.get(P.lock, false),
           onChanged: (v) async {
-            if (v && !await authenticate('确认开启 Hikari Novel 的锁')) {
+            if (v && !await authenticate('确认开启 Ark Novel 的锁')) {
               if (mounted) _snack('验证未通过，或此设备未设置锁屏密码 / 生物识别');
               return;
             }
@@ -621,7 +621,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
     FutureBuilder(
       future: PackageInfo.fromPlatform(),
       builder: (context, snap) => XTile(
-        title: 'Hikari Novel',
+        title: 'Ark Novel',
         subtitle: '轻小说文库第三方客户端 · MIT${snap.hasData ? ' · v${snap.data!.version}+${snap.data!.buildNumber}' : ''}',
         onTap: AppPrefs.unlockEntry ? null : _tapVersion,
       ),

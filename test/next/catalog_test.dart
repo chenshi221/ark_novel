@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/catalog.dart';
+import 'package:ark_novel/next/catalog.dart';
 
 void main() {
   test('rankParam：分时间的榜单是「时间 + 榜单」，其他的只有榜单', () {

@@ -1,4 +1,4 @@
-import 'package:hikari_novel_flutter/models/novel_cover.dart';
+import 'package:ark_novel/models/novel_cover.dart';
 
 class RecommendBlock {
   final String title;

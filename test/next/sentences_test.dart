@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/reader/paginator.dart';
+import 'package:ark_novel/next/reader/paginator.dart';
 
 void main() {
   test('按句号切句，引号并入句尾，太短的并入下一句', () {

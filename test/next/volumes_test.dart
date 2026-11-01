@@ -4,20 +4,20 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
-import 'package:hikari_novel_flutter/models/cat_chapter.dart';
-import 'package:hikari_novel_flutter/models/cat_volume.dart';
-import 'package:hikari_novel_flutter/next/cover_color.dart';
-import 'package:hikari_novel_flutter/next/image_cache.dart';
-import 'package:hikari_novel_flutter/next/read_state.dart';
-import 'package:hikari_novel_flutter/next/pages/volumes_page.dart';
-import 'package:hikari_novel_flutter/next/progress.dart';
-import 'package:hikari_novel_flutter/next/volumes.dart';
+import 'package:ark_novel/models/cat_chapter.dart';
+import 'package:ark_novel/models/cat_volume.dart';
+import 'package:ark_novel/next/cover_color.dart';
+import 'package:ark_novel/next/image_cache.dart';
+import 'package:ark_novel/next/read_state.dart';
+import 'package:ark_novel/next/pages/volumes_page.dart';
+import 'package:ark_novel/next/progress.dart';
+import 'package:ark_novel/next/volumes.dart';
 
 CatVolume vol(String t, List<String> chapters) => CatVolume(title: t, chapters: [for (final c in chapters) CatChapter(title: c.startsWith('i') ? '插图' : '第$c章', cid: c)]);
 
 void main() {
   setUpAll(() async {
-    Hive.init(Directory.systemTemp.createTempSync('hikari_vol_test').path);
+    Hive.init(Directory.systemTemp.createTempSync('ark_vol_test').path);
     await Hive.openBox('session');
   });
 

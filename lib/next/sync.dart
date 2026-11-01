@@ -27,6 +27,7 @@ class Sync {
 
   static String get url => (_box.get('sync:url') as String?) ?? 'https://dav.jianguoyun.com/dav/';
   static String get user => (_box.get('sync:user') as String?) ?? '';
+  // 默认文件夹沿用改名前的 hikari：老用户的云端数据都在这个文件夹里，新装的 Ark Novel 直接就能同步到
   static String get folder => (_box.get('sync:folder') as String?) ?? 'hikari';
   static int get lastSync => (_box.get('sync:last') as int?) ?? 0;
   static bool get configured => user.isNotEmpty;

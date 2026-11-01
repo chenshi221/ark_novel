@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/reader/reader_body.dart';
+import 'package:ark_novel/next/reader/reader_body.dart';
 
 void main() {
   Future<void> pump(WidgetTester t, {required double width, required bool dual, required ReaderNav nav, required List<int> offsets}) async {

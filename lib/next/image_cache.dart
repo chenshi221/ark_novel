@@ -164,7 +164,7 @@ class ImageStore {
 
   static bool get _srAuto => AppPrefs.read(P.coverSr, 0) == 0;
 
-  static const _upscale = MethodChannel('hikari/upscale');
+  static const _upscale = MethodChannel('ark/upscale');
 
   /// 有图放大好了、模式换了：显示中的图重新取一次
   final srVersion = ValueNotifier<int>(0);

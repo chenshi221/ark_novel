@@ -181,7 +181,7 @@ class _ReportPageState extends ConsumerState<ReportPage> {
             const Text('分卷的阅读时间和日期从这个版本开始记录', style: TextStyle(color: Colors.white54, fontSize: 12)),
           ],
           const SizedBox(height: 28),
-          const Text('该报告由 Hikari Novel 统计生成', style: TextStyle(color: Colors.white38, fontSize: 12)),
+          const Text('该报告由 Ark Novel 统计生成', style: TextStyle(color: Colors.white38, fontSize: 12)),
         ],
       ),
     );

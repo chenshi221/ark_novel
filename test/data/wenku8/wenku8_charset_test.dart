@@ -1,8 +1,8 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_charset.dart';
-import 'package:hikari_novel_flutter/models/common/charset_type.dart';
+import 'package:ark_novel/data/wenku8/wenku8_charset.dart';
+import 'package:ark_novel/models/common/charset_type.dart';
 
 void main() {
   group('percentEncode', () {

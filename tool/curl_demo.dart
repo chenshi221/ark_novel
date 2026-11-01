@@ -1,7 +1,7 @@
 // 仿真翻页的演示页（只用来在浏览器里目测效果）：
 //   flutter build web -t tool/curl_demo.dart
 import 'package:flutter/material.dart';
-import 'package:hikari_novel_flutter/next/reader/page_curl.dart';
+import 'package:ark_novel/next/reader/page_curl.dart';
 
 void main() => runApp(const MaterialApp(debugShowCheckedModeBanner: false, home: _Demo()));
 

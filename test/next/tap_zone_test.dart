@@ -1,7 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/reader/reader_body.dart';
+import 'package:ark_novel/next/reader/reader_body.dart';
 
 void main() {
   const size = Size(300, 600);

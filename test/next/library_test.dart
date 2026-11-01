@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/library.dart';
+import 'package:ark_novel/next/library.dart';
 
 RemoteBook r(String bid, {int shelf = 0}) => (bid: bid, title: 't$bid', img: '', shelf: shelf);
 

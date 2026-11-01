@@ -34,7 +34,7 @@ class AppGuard extends ConsumerStatefulWidget {
 }
 
 class _AppGuardState extends ConsumerState<AppGuard> with WidgetsBindingObserver {
-  static const _secure = MethodChannel('hikari/secure');
+  static const _secure = MethodChannel('ark/secure');
   late bool _locked = lockSupported && AppPrefs.read(P.lock, false);
   DateTime? _pausedAt;
   bool _asking = false;
@@ -71,7 +71,7 @@ class _AppGuardState extends ConsumerState<AppGuard> with WidgetsBindingObserver
   Future<void> _unlock() async {
     if (_asking) return;
     _asking = true;
-    final ok = await authenticate('解锁 Hikari Novel');
+    final ok = await authenticate('解锁 Ark Novel');
     _asking = false;
     if (ok && mounted) setState(() => _locked = false);
   }
@@ -101,7 +101,7 @@ class _AppGuardState extends ConsumerState<AppGuard> with WidgetsBindingObserver
                   children: [
                     const Icon(Icons.lock_outline, size: 56),
                     const SizedBox(height: 16),
-                    const Text('Hikari Novel 已锁定'),
+                    const Text('Ark Novel 已锁定'),
                     const SizedBox(height: 16),
                     FilledButton(onPressed: _unlock, child: const Text('解锁')),
                   ],

@@ -224,7 +224,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   bool? _keepOn;
   bool? _full;
   double? _bright;
-  static const _screen = MethodChannel('hikari/screen');
+  static const _screen = MethodChannel('ark/screen');
 
   void _applyChrome(ReaderPrefs p) {
     if (_keepOn != p.keepScreenOn) {
@@ -247,7 +247,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   void _setUi() => SystemChrome.setEnabledSystemUIMode(_full == true && !_bar ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge);
 
   // ---- 音量键翻页：安卓原生那边拦下音量键后通过这个通道回调 ----
-  static const _vol = MethodChannel('hikari/reader_volume_keys');
+  static const _vol = MethodChannel('ark/reader_volume_keys');
   bool _volOn = false;
 
   /// 开着、而且不在朗读时才拦音量键（朗读时让它调音量）；只在状态变化时通知原生。

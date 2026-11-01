@@ -5,17 +5,17 @@ import 'package:dio/dio.dart';
 import 'package:enough_convert/enough_convert.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_app_api.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_client.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_urls.dart';
-import 'package:hikari_novel_flutter/models/cat_chapter.dart';
-import 'package:hikari_novel_flutter/models/cat_volume.dart';
-import 'package:hikari_novel_flutter/models/common/charset_type.dart';
-import 'package:hikari_novel_flutter/models/content.dart';
-import 'package:hikari_novel_flutter/next/cache.dart';
-import 'package:hikari_novel_flutter/next/data.dart';
-import 'package:hikari_novel_flutter/next/txt_download.dart';
-import 'package:hikari_novel_flutter/next/unlock.dart';
+import 'package:ark_novel/data/wenku8/wenku8_app_api.dart';
+import 'package:ark_novel/data/wenku8/wenku8_client.dart';
+import 'package:ark_novel/data/wenku8/wenku8_urls.dart';
+import 'package:ark_novel/models/cat_chapter.dart';
+import 'package:ark_novel/models/cat_volume.dart';
+import 'package:ark_novel/models/common/charset_type.dart';
+import 'package:ark_novel/models/content.dart';
+import 'package:ark_novel/next/cache.dart';
+import 'package:ark_novel/next/data.dart';
+import 'package:ark_novel/next/txt_download.dart';
+import 'package:ark_novel/next/unlock.dart';
 import 'package:hive_ce/hive.dart';
 
 /// 假的 App 接口：挂了，或者返回带图的正文。
@@ -81,7 +81,7 @@ void main() {
   late ProviderContainer c;
 
   setUpAll(() async {
-    Hive.init(Directory.systemTemp.createTempSync('hikari_unlock_test').path);
+    Hive.init(Directory.systemTemp.createTempSync('ark_unlock_test').path);
     await Hive.openBox('session');
     await ChapterCache.open();
   });

@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_urls.dart';
-import 'package:hikari_novel_flutter/models/common/charset_type.dart';
+import 'package:ark_novel/data/wenku8/wenku8_urls.dart';
+import 'package:ark_novel/models/common/charset_type.dart';
 
 void main() {
   const base = 'https://www.wenku8.net';

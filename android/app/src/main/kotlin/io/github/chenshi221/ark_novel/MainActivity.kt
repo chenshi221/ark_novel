@@ -1,4 +1,4 @@
-package pers.cyh128.hikari_novel
+package io.github.chenshi221.ark_novel
 
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -12,8 +12,8 @@ import io.flutter.plugin.common.MethodChannel
 
 // 生物识别锁（local_auth）要求 Activity 是 FragmentActivity；朗读通知（audio_service）要求用它的 Activity 共享引擎
 class MainActivity : AudioServiceFragmentActivity() {
-    private val intentChannelName = "hikari/system_intents"
-    private val readerVolumeChannelName = "hikari/reader_volume_keys"
+    private val intentChannelName = "ark/system_intents"
+    private val readerVolumeChannelName = "ark/reader_volume_keys"
     private var readerVolumeChannel: MethodChannel? = null
     private var readerVolumeKeyHandlingEnabled = false
 
@@ -30,7 +30,7 @@ class MainActivity : AudioServiceFragmentActivity() {
         }
 
         // 阅读器自定义亮度：value 在 0~1 之间设窗口亮度，负数交还给系统
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hikari/screen").setMethodCallHandler { call, result ->
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "ark/screen").setMethodCallHandler { call, result ->
             if (call.method == "setBrightness") {
                 val v = (call.argument<Double>("value") ?: -1.0).toFloat()
                 val lp = window.attributes
@@ -43,7 +43,7 @@ class MainActivity : AudioServiceFragmentActivity() {
         }
 
         // 停止朗读时删掉朗读通知（audio_service 的通知 id 固定是 1124；服务被 App 绑着，它自己删不掉）
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hikari/tts").setMethodCallHandler { call, result ->
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "ark/tts").setMethodCallHandler { call, result ->
             if (call.method == "cancelNotice") {
                 NotificationManagerCompat.from(this).cancel(1124)
                 result.success(null)
@@ -54,7 +54,7 @@ class MainActivity : AudioServiceFragmentActivity() {
 
         // 封面超分辨率（见 Upscaler）：传进来原图字节，传回放大 4 倍的 JPEG
         val upscaler = Upscaler(applicationContext)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hikari/upscale").setMethodCallHandler { call, result ->
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "ark/upscale").setMethodCallHandler { call, result ->
             val bytes = call.argument<ByteArray>("bytes")
             if (call.method != "upscale" || bytes == null) {
                 result.notImplemented()
@@ -66,7 +66,7 @@ class MainActivity : AudioServiceFragmentActivity() {
         }
 
         // 防截屏、隐藏最近任务里的预览
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hikari/secure").setMethodCallHandler { call, result ->
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "ark/secure").setMethodCallHandler { call, result ->
             if (call.method == "setSecure") {
                 if (call.argument<Boolean>("secure") == true) {
                     window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)

@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/chapter_list.dart';
-import 'package:hikari_novel_flutter/next/pages/bookshelf_page.dart';
+import 'package:ark_novel/next/chapter_list.dart';
+import 'package:ark_novel/next/pages/bookshelf_page.dart';
 
 void main() {
   test('三态筛选：0 不限，1 必须满足，2 必须不满足', () {

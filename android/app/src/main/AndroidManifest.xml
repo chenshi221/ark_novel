@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
 
     <application
-        android:label="Hikari Novel"
+        android:label="Ark Novel"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon"
         android:networkSecurityConfig="@xml/network_security_config">
@@ -28,7 +28,7 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
-            <!-- 小组件打开 App 带的 hikari:// 链接由 home_widget 交给 App 处理；Flutter 自己别再把它当路由打开 -->
+            <!-- 小组件打开 App 带的 ark:// 链接由 home_widget 交给 App 处理；Flutter 自己别再把它当路由打开 -->
             <meta-data android:name="flutter_deeplinking_enabled" android:value="false" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

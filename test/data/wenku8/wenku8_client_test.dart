@@ -2,10 +2,10 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_client.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_exceptions.dart';
-import 'package:hikari_novel_flutter/models/common/charset_type.dart';
-import 'package:hikari_novel_flutter/models/custom_exception.dart';
+import 'package:ark_novel/data/wenku8/wenku8_client.dart';
+import 'package:ark_novel/data/wenku8/wenku8_exceptions.dart';
+import 'package:ark_novel/models/common/charset_type.dart';
+import 'package:ark_novel/models/custom_exception.dart';
 
 /// 按请求路径返回预设响应的假适配器，并记录请求过的地址
 class _FakeAdapter implements HttpClientAdapter {

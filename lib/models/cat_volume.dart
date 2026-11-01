@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:hikari_novel_flutter/models/cat_chapter.dart';
+import 'package:ark_novel/models/cat_chapter.dart';
 import 'package:json_annotation/json_annotation.dart';
 
 part 'cat_volume.g.dart';

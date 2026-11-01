@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/data/wenku8/wenku8_app_api.dart';
+import 'package:ark_novel/data/wenku8/wenku8_app_api.dart';
 
 String fixture(String name) => File('test/data/wenku8/fixtures/$name').readAsStringSync();
 

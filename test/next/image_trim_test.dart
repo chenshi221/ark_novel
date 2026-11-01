@@ -4,8 +4,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hikari_novel_flutter/next/image_cache.dart';
-import 'package:hikari_novel_flutter/next/session.dart';
+import 'package:ark_novel/next/image_cache.dart';
+import 'package:ark_novel/next/session.dart';
 
 /// 假网络：记下请求的地址，返回固定字节
 class _FakeAdapter implements HttpClientAdapter {

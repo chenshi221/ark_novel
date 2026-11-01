@@ -40,7 +40,7 @@ class ReadingWidget {
         HomeWidget.saveWidgetData('subDark', _hex(AppColors.paperSoft)),
         HomeWidget.saveWidgetData('icon', palette.art == null ? null : await _icon(palette.art!)),
       ]);
-      await HomeWidget.updateWidget(qualifiedAndroidName: 'pers.cyh128.hikari_novel.ReadingWidget');
+      await HomeWidget.updateWidget(qualifiedAndroidName: 'io.github.chenshi221.ark_novel.ReadingWidget');
     } catch (_) {} // 小组件更新失败不影响 App
   }
 
@@ -55,7 +55,7 @@ class ReadingWidget {
     return f.path;
   }
 
-  /// 点小组件打开的链接 → App 里的路由：hikari://reader/aid/cid、hikari://updates、hikari://shelf
+  /// 点小组件打开的链接 → App 里的路由：ark://reader/aid/cid、ark://updates、ark://shelf
   static String? route(Uri? uri) => switch (uri) {
     Uri(host: 'reader', pathSegments: [final aid, final cid]) => Routes.reader(aid, cid),
     Uri(host: 'updates') => Routes.updates,

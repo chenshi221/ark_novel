@@ -12,7 +12,7 @@ class TtsNotice extends BaseAudioHandler {
   static Future<TtsNotice?> get() => _init ??= AudioService.init(
     builder: TtsNotice._,
     config: const AudioServiceConfig(
-      androidNotificationChannelId: 'hikari.tts',
+      androidNotificationChannelId: 'ark.tts',
       androidNotificationChannelName: '朗读',
       androidNotificationIcon: 'mipmap/launcher_icon',
     ),
@@ -49,6 +49,6 @@ class TtsNotice extends BaseAudioHandler {
     playbackState.add(playbackState.value.copyWith(playing: false));
     playbackState.add(PlaybackState(processingState: AudioProcessingState.idle, playing: false));
     await Future<void>.delayed(const Duration(milliseconds: 300)); // 等上面两次状态发到原生那边
-    await const MethodChannel('hikari/tts').invokeMethod('cancelNotice').catchError((_) {});
+    await const MethodChannel('ark/tts').invokeMethod('cancelNotice').catchError((_) {});
   }
 }
