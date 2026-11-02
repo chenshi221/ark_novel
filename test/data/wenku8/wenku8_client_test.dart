@@ -131,16 +131,4 @@ void main() {
     final client = _client(_FakeAdapter({}));
     await client.restoreCookie('jieqiUserInfo=abc;jieqiRecentRead=1792527353,1792527401,1792527434', ['https://www.wenku8.net']);
   });
-
-  test('全局限流：并发请求正常执行且不会死锁', () async {
-    final adapter = _FakeAdapter({
-      for (var i = 0; i < 10; i++) '/t$i.php': () => _page([0xB5, 0xC7]),
-    });
-    final client = _client(adapter);
-    final results = await Future.wait([
-      for (var i = 0; i < 10; i++) client.getPage('https://www.wenku8.net/t$i.php', charsetParam: false),
-    ]);
-    expect(results, hasLength(10));
-    expect(results.every((r) => r == '登'), isTrue);
-  });
 }

@@ -128,53 +128,42 @@ class Wenku8Parser {
     final Element? t1 = parse(html).getElementById('content');
     if (t1 == null) throw const Wenku8UnexpectedPageException("novel detail: #content not found");
     final tables = t1.getElementsByTagName('table');
-    if (tables.isEmpty) throw const Wenku8UnexpectedPageException("novel detail: table not found");
+    // 结构不对就不是详情页：报错，不能当成功，否则会用空数据覆盖缓存里的好页面
+    if (tables.length < 3) throw const Wenku8UnexpectedPageException("novel detail: tables not found");
     final Element t2 = tables[0];
     final String title = t2.querySelector('span > b')?.text.trim() ?? '';
     final trs = t2.getElementsByTagName('tr');
     final tds = trs.length > 2 ? trs[2].getElementsByTagName('td') : <Element>[];
-    String author = '';
-    String status = '';
+    if (tds.length < 3) throw const Wenku8UnexpectedPageException("novel detail: info row not found");
+    final authorText = tds[1].text.trim();
+    final String author = authorText.length >= 5 ? authorText.substring(5) : authorText;
+    final statusText = tds[2].text.trim();
+    final String status = statusText.length >= 5 ? statusText.substring(5) : statusText;
     String? lastUpdate;
-    if (tds.length > 1) {
-      final t = tds[1].text.trim();
-      author = t.length >= 5 ? t.substring(5) : t;
-    }
-    if (tds.length > 2) {
-      final t = tds[2].text.trim();
-      status = t.length >= 5 ? t.substring(5) : t;
-    }
     if (tds.length > 3) {
       final t = tds[3].text.trim();
       lastUpdate = t.length >= 5 ? t.substring(5) : null;
     }
 
     final imgs = t1.getElementsByTagName('img');
-    final String imgUrl = imgs.isNotEmpty ? ImageUrlHelper.normalize(imgs[0].attributes['src'] ?? '') : '';
-    final table2 = tables.length > 2 ? tables[2] : null;
-    final table2Tds = table2?.getElementsByTagName('td') ?? <Element>[];
+    if (imgs.isEmpty) throw const Wenku8UnexpectedPageException("novel detail: cover not found");
+    final String imgUrl = ImageUrlHelper.normalize(imgs[0].attributes['src'] ?? '');
+    final table2Tds = tables[2].getElementsByTagName('td');
     final spans = table2Tds.length > 1 ? table2Tds[1].getElementsByTagName('span') : <Element>[];
+    if (spans.length < 2) throw const Wenku8UnexpectedPageException("novel detail: tags not found");
     String introduce = spans.length > 5 ? spans[5].innerHtml.replaceAll("<br>", "\n") : "";
-    final String tag = spans.isNotEmpty ? spans[0].text : '';
-    final String tempHeat = spans.length > 1 ? spans[1].text : '';
-    final firstTdSpans = table2Tds.isNotEmpty ? table2Tds[0].getElementsByTagName('span') : <Element>[];
+    final String tag = spans[0].text;
+    final String tempHeat = spans[1].text;
+    final firstTdSpans = table2Tds[0].getElementsByTagName('span');
     final bool isAnimated = firstTdSpans.isNotEmpty;
 
     String? heat;
     String? trending;
     if (lastUpdate == null) {
-      introduce = tempHeat.isNotEmpty ? tempHeat : introduce; // 下架书籍的简介在这个位置
-    } else {
-      if (tempHeat.length >= 7) {
-        heat = tempHeat.substring(5, 7);
-      } else if (tempHeat.length >= 5) {
-        heat = tempHeat.substring(5);
-      }
-      if (tempHeat.length >= 20) {
-        trending = tempHeat.substring(18, 20);
-      } else if (tempHeat.length >= 19) {
-        trending = tempHeat.substring(18, 19);
-      }
+      introduce = tempHeat; // 下架书籍的简介在这个位置
+    } else if (tempHeat.length >= 19) {
+      heat = tempHeat.substring(5, 7);
+      trending = tempHeat.length >= 20 ? tempHeat.substring(18, 20) : tempHeat.substring(18, 19);
     }
 
     final tags = (tag.length >= 7 ? tag.substring(7) : tag).split(" ").where((t) => t.isNotEmpty).toList();

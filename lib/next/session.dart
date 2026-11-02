@@ -69,10 +69,9 @@ class SessionStore {
 
   Future<void> setNativeNet(bool value) => _box.put('nativeNet', value);
 
-  HttpClientAdapter adapter({String? proxyOverride}) {
-    final p = proxyOverride ?? proxy;
-    HttpClientAdapter io() => IOHttpClientAdapter(createHttpClient: () => HttpClient()..findProxy = (_) => p.isEmpty ? 'DIRECT' : 'PROXY $p');
-    return nativeNet && p.isEmpty ? (nativeAdapter(io) ?? io()) : io();
+  HttpClientAdapter adapter() {
+    HttpClientAdapter io() => IOHttpClientAdapter(createHttpClient: () => HttpClient()..findProxy = (_) => proxy.isEmpty ? 'DIRECT' : 'PROXY $proxy');
+    return nativeNet && proxy.isEmpty ? (nativeAdapter(io) ?? io()) : io();
   }
 
   Future<void> setUserAgent(String ua) => _box.put('ua', ua);
@@ -144,10 +143,22 @@ final nodeProvider = NotifierProvider<NodeController, Wenku8Node>(NodeController
 
 /// 当前 HTTP 代理配置控制器。
 class HttpProxyController extends Notifier<String> {
+  Timer? _debounce;
+
   @override
-  String build() => ref.read(sessionStoreProvider).proxy;
+  String build() {
+    ref.onDispose(() => _debounce?.cancel());
+    return ref.read(sessionStoreProvider).proxy;
+  }
+
+  /// 输入框用：停手一会儿才生效，半截地址不当代理用。
+  void setLater(String proxy) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(seconds: 1), () => set(proxy));
+  }
 
   Future<void> set(String proxy) async {
+    _debounce?.cancel();
     final trimmed = proxy.trim();
     await ref.read(sessionStoreProvider).setProxy(trimmed);
     state = trimmed;
@@ -167,14 +178,11 @@ final wenku8ClientProvider = Provider<Wenku8Client>((ref) {
     charset: () => CharsetType.gbk,
     // 浏览器不允许网页设置 User-Agent，由转发程序代为添加
     headers: kIsWeb ? const {} : {'User-Agent': store.userAgent},
-    dio: kIsWeb ? null : (Dio()..httpClientAdapter = store.adapter(proxyOverride: ref.read(proxyProvider))),
+    dio: kIsWeb ? null : (Dio()..httpClientAdapter = store.adapter()),
     challengeFallback: kIsWeb ? null : (url, {referer}) => webFetch(url, referer: referer, proxy: ref.read(proxyProvider)),
   );
-  ref.listen(proxyProvider, (_, next) {
-    if (!kIsWeb) {
-      client.dio.httpClientAdapter = store.adapter(proxyOverride: next);
-    }
-  });
+  // shortcut: 换代理时旧适配器不关（Cronet 有请求在途时关闭可能出错），只有手动改代理才多留一个，真成问题再等请求结束后关
+  if (!kIsWeb) ref.listen(proxyProvider, (_, _) => client.dio.httpClientAdapter = store.adapter());
   return client;
 });
 
@@ -182,9 +190,9 @@ final wenku8ClientProvider = Provider<Wenku8Client>((ref) {
 final imageDioProvider = Provider<Dio>((ref) {
   final store = ref.watch(sessionStoreProvider);
   final node = ref.watch(nodeProvider);
-  final proxy = ref.watch(proxyProvider);
+  ref.watch(proxyProvider);
   return Dio(BaseOptions(responseType: ResponseType.bytes, connectTimeout: const Duration(seconds: 12), receiveTimeout: const Duration(seconds: 25), headers: {'User-Agent': store.userAgent, 'Referer': '${siteBase(node)}/'}))
-    ..httpClientAdapter = store.adapter(proxyOverride: proxy);
+    ..httpClientAdapter = store.adapter();
 });
 
 final wenku8UrlsProvider = Provider<Wenku8Urls>((ref) => Wenku8Urls(siteBase(ref.watch(nodeProvider)), CharsetType.gbk));

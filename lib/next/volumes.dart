@@ -193,6 +193,8 @@ class VolumeCoverQueue {
   final _queue = <(String, String)>[];
   final _bg = <(String, String)>[]; // 后台慢慢取的，排在眼前要看的后面
   bool _running = false;
+  static const _maxFailures = 3;
+  static const _failureGap = Duration(milliseconds: 1500);
   final _bgmTried = <(String, String)>{}; // 这次运行里已经按 Bangumi 补过（或者对不上）的卷
   final _bgmFilling = <String>{};
   final _bgmFailed = <String>{}; // 连不上 Bangumi、图下不下来的书，这次运行不再试
@@ -248,6 +250,17 @@ class VolumeCoverQueue {
   Future<void> _pump() async {
     if (_running) return;
     _running = true;
+    var failures = 0;
+    // 单本出错就跳过；连着几本都出错多半是网络问题或被限流，先停，下次打开 App 再接着取
+    Future<void> skip() async {
+      if (++failures >= _maxFailures) {
+        _queue.clear();
+        _bg.clear();
+      } else {
+        await Future<void>.delayed(_failureGap);
+      }
+    }
+
     try {
       while (_queue.isNotEmpty || _bg.isNotEmpty) {
         final (aid, title) = _queue.isNotEmpty ? _queue.removeLast() : _bg.removeAt(0);
@@ -270,7 +283,8 @@ class VolumeCoverQueue {
             _fillFromBangumi(aid).ignore();
             continue;
           } catch (_) {
-            continue; // 单本网络或内容出错跳过，不影响队列里其他书的获取
+            await skip();
+            continue;
           }
           await ChapterCache.put(aid, v.illus!, content);
           await Future<void>.delayed(const Duration(milliseconds: 1500));
@@ -279,8 +293,10 @@ class VolumeCoverQueue {
         try {
           url = await _trimmed(await chooseCover(content.images, _size));
         } catch (_) {
+          await skip();
           continue;
         }
+        failures = 0;
         await Volumes.setCover(aid, title, url);
         await _dropSkipped(aid, v, content.images);
       }

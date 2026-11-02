@@ -103,7 +103,7 @@ void main() {
         <tr></tr><tr></tr>
         <tr><td></td><td>文库作者</td><td>连载中</td><td>2024</td></tr>
       </table>
-      <img src="/test.jpg">
+      <table><tr><td><img src="/test.jpg"></td></tr></table>
       <table>
         <tr></tr><tr></tr>
         <tr><td></td><td><span>短标签</span><span>短热度</span></td></tr>
@@ -114,6 +114,36 @@ void main() {
     expect(d.author, '文库作者');
     expect(d.status, '连载中');
     expect(d.lastUpdate, isNull);
+  });
+
+  test('详情：热度文字太短时热度和上升指数都不显示', () {
+    const html = '''
+    <div id="content">
+      <table>
+        <tr></tr><tr></tr>
+        <tr><td></td><td>小说作者：甲</td><td>文章状态：连载中</td><td>最后更新：2024-01-02</td></tr>
+      </table>
+      <table><tr><td><img src="/test.jpg"></td></tr></table>
+      <table><tr><td></td><td><span>作品Tags：魔法</span><span>作品热度：A级</span></td></tr></table>
+    </div>
+    ''';
+    final d = Wenku8Parser.novelDetail(html);
+    expect(d.heat, isNull);
+    expect(d.trending, isNull);
+  });
+
+  test('详情：结构不对的页面报错，不当成功', () {
+    for (final html in [
+      '<div id="content"><table><tr><td>别的页面</td></tr></table></div>',
+      '<div id="content"><table></table><table></table><table></table></div>',
+      '''<div id="content">
+        <table><tr></tr><tr></tr><tr><td></td><td>作者</td><td>状态</td></tr></table>
+        <table><tr><td><img src="/a.jpg"></td></tr></table>
+        <table><tr><td></td><td></td></tr></table>
+      </div>''',
+    ]) {
+      expect(() => Wenku8Parser.novelDetail(html), throwsA(isA<Wenku8UnexpectedPageException>()));
+    }
   });
 
   test('书评列表', () {

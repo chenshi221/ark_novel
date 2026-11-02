@@ -45,7 +45,7 @@ class _AppGuardState extends ConsumerState<AppGuard> with WidgetsBindingObserver
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     if (_locked) WidgetsBinding.instance.addPostFrameCallback((_) => _unlock());
-    if (secureScreenSupported) WidgetsBinding.instance.addPostFrameCallback((_) => _syncSecure());
+    _syncSecure();
   }
 
   void _syncSecure() {

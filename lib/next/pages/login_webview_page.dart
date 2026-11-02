@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../models/common/wenku8_node.dart';
 import '../session.dart';
+import '../web_fetch.dart';
 
 class WebSessionResult {
   const WebSessionResult(this.cookies, this.userAgent);
@@ -54,7 +54,6 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
   bool _submitted = false;
   int _progress = 0;
   String? _ua;
-  bool _proxied = false;
   final _events = <String>[]; // 最近的页面加载 / 报错记录，复制诊断信息时带上
 
   void _log(String line) {
@@ -69,14 +68,7 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
   }
 
   Future<void> _prepare() async {
-    // 请求页面用了代理时，WebView 也用同一个，两边的出口才一致（只有 Android 支持）
-    final proxy = ref.read(sessionStoreProvider).proxy;
-    if (Platform.isAndroid && proxy.isNotEmpty) {
-      try {
-        await ProxyController.instance().setProxyOverride(settings: ProxySettings(proxyRules: [ProxyRule(url: 'http://$proxy')]));
-        _proxied = true;
-      } catch (_) {}
-    }
+    await applyWebViewProxy(ref.read(sessionStoreProvider).proxy);
     if (widget.isLogin) {
       // 只清掉旧的登录 cookie，保留 Cloudflare 的放行 cookie，免得又要验证一遍
       for (final c in await _cookieManager.getCookies(url: WebUri(widget.url))) {
@@ -84,12 +76,6 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
       }
     }
     if (mounted) setState(() => _ready = true);
-  }
-
-  @override
-  void dispose() {
-    if (_proxied) ProxyController.instance().clearProxyOverride();
-    super.dispose();
   }
 
   /// 找到带密码框的表单，确认提交地址和当前页面同域、https，再填值提交。返回 null 表示已提交，否则是没填的原因（例如还在验证页）。
