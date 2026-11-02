@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import '../data/wenku8/wenku8_client.dart';
 import '../data/wenku8/wenku8_exceptions.dart';
 import 'catalog.dart';
 import 'data.dart';
@@ -202,6 +203,8 @@ class LibraryController extends Notifier<LibraryState> {
     state.cats.where((c) => c.id != id).toList(),
   );
 
+  bool _prefetching = false;
+
   bool get _online {
     final s = ref.read(sessionProvider);
     return s is SessionLoggedIn && !s.offline;
@@ -249,7 +252,7 @@ class LibraryController extends Notifier<LibraryState> {
 
   /// 和网站书架同步：拉网站全部 6 个书架 → 推本地排队的操作 → 对一遍。没登录、离线时什么都不做。
   /// 距上次不到 30 分钟时跳过（[force] 除外）。返回出错信息，成功或跳过返回 null；[force]（用户下拉）时跳过也说明原因。
-  Future<String?> sync({bool force = false}) async {
+  Future<String?> sync({bool force = false, bool details = true}) async {
     final s = ref.read(sessionProvider);
     if (s is! SessionLoggedIn) return null;
     if (s.offline) return force ? '现在是离线模式（没连上网站），点顶部的提示重新连接后再下拉' : null;
@@ -261,6 +264,7 @@ class LibraryController extends Notifier<LibraryState> {
       final api = ref.read(apiProvider);
       final remote = <String, RemoteBook>{};
       for (var shelf = 0; shelf < 6; shelf++) {
+        if (shelf > 0) await Future<void>.delayed(const Duration(seconds: 1)); // 连续读太快，网站会回 429
         for (final b in (await api.bookshelf(shelf, fresh: true)).list) {
           remote.putIfAbsent(b.aid, () => (bid: b.bid, title: b.title, img: b.img, shelf: shelf));
         }
@@ -277,7 +281,7 @@ class LibraryController extends Notifier<LibraryState> {
       await _save(reconcile(state.books, remote, ops, now: now, firstImport: first), cats);
       await _box.put('lib:imported', s.user.uid);
       await _box.put('lib:sync', now);
-      unawaited(_prefetch(api));
+      if (details) unawaited(prefetchDetails());
       return null;
     } catch (e) {
       return e.toString();
@@ -287,17 +291,20 @@ class LibraryController extends Notifier<LibraryState> {
   }
 
   /// 书架里还没存过详情的书，后台一本本取下来存好（离线也能看简介）；目录由检查更新顺带存。
-  /// 放慢一点免得被网站限流，网络出问题就停。
-  Future<void> _prefetch(Api api) async {
-    for (final b in state.books.values.toList()) {
-      if (api.hasDetail(b.aid)) continue;
-      try {
-        final d = await api.detail(b.aid);
+  /// 网络出问题就停，下次接着取（已有的会跳过）。
+  Future<void> prefetchDetails() async {
+    if (!_online || _prefetching) return;
+    _prefetching = true;
+    try {
+      final api = ref.read(apiProvider);
+      for (final b in state.books.values.toList()) {
+        if (api.hasDetail(b.aid)) continue;
+        final d = await runInBackground(() => api.detail(b.aid));
         await noteDetail(b.aid, title: d.title, img: d.imgUrl, status: d.status);
-      } catch (_) {
-        return;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 800));
+    } catch (_) {
+    } finally {
+      _prefetching = false;
     }
   }
 }

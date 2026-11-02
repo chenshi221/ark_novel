@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import '../data/wenku8/wenku8_client.dart';
 import 'app_prefs.dart';
 import 'data.dart';
 import 'library.dart';
@@ -54,6 +55,9 @@ class UpdateStore {
       await _box.put('updates:at:${e.key}', e.value);
     }
   }
+
+  /// 只存基准，不算检查完成。
+  static Future<void> saveBaseline(Map<String, int> known) => _box.put('updates:known', known);
 
   static Map<String, int> knownCounts() => _known.map((k, v) => MapEntry(k as String, v as int));
 
@@ -120,22 +124,23 @@ class UpdateController extends Notifier<UpdateProgress> {
     try {
       final all = ref.read(libraryProvider).books.values.toList();
       final known = UpdateStore.knownCounts();
+      final firstRun = UpdateStore.lastCheck == 0; // 第一次要查全部的书，中途关掉下次接着查
       final books = {
         for (final b in all)
-          if ((only == null ? _catOk(b) : only.contains(b.aid)) && _wanted(b, known)) b.aid: (title: b.title, img: b.img),
+          if ((only == null ? _catOk(b) && !(firstRun && known.containsKey(b.aid)) : only.contains(b.aid)) && _wanted(b, known)) b.aid: (title: b.title, img: b.img),
       };
       final feed = UpdateStore.feed().map((e) => {'aid': e.aid, 'title': e.title, 'img': e.img, 'chapter': e.chapter, 'cid': e.cid, 'time': e.time.millisecondsSinceEpoch}).toList();
       final at = <String, int>{};
       final fresh = <Map>[];
       var done = 0;
       state = UpdateProgress(running: true, total: books.length);
-      // 每批 4 本并行：比一本本查快，又不至于被网站限流；单本失败不影响其他
+      // 请求的节奏由 Wenku8Client 统一管，这里每 4 本存一次进度；单本失败不影响其他
       final entries = books.entries.toList();
       for (var i = 0; i < entries.length; i += 4) {
         final batch = entries.skip(i).take(4);
         final results = await Future.wait(batch.map((e) async {
           try {
-            final cat = await api.catalogue(e.key);
+            final cat = await runInBackground(() => api.catalogue(e.key));
             await Volumes.saveCatalogue(e.key, cat);
             return cat.expand((v) => v.chapters).toList();
           } catch (_) {
@@ -155,6 +160,7 @@ class UpdateController extends Notifier<UpdateProgress> {
           }
           known[e.key] = chapters.length;
         }
+        if (firstRun) await UpdateStore.saveBaseline(known);
         done += batch.length;
         state = UpdateProgress(running: true, done: done, total: books.length);
       }
