@@ -21,6 +21,7 @@ import 'backup.dart';
 import 'cache.dart';
 import 'env.dart';
 import 'net_stub.dart' if (dart.library.io) 'net_io.dart';
+import 'web_fetch.dart';
 
 /// 本地保存的登录信息：cookie、选择的节点、代理、浏览器标识。密码放在系统安全存储里。
 class SessionStore {
@@ -145,6 +146,7 @@ final wenku8ClientProvider = Provider<Wenku8Client>((ref) {
     // 浏览器不允许网页设置 User-Agent，由转发程序代为添加
     headers: kIsWeb ? const {} : {'User-Agent': store.userAgent},
     dio: kIsWeb ? null : (Dio()..httpClientAdapter = store.adapter()),
+    challengeFallback: kIsWeb ? null : webFetch,
   );
 });
 
@@ -196,6 +198,8 @@ class SessionController extends Notifier<SessionState> {
   @override
   SessionState build() {
     Future.microtask(restore);
+    // 换节点后重新确认：两个站点的验证状态不一样，顶部"被拦住 / 离线"提示要跟着变
+    ref.listen(nodeProvider, (_, _) => restore());
     // 本地就能定下来的直接给，第一帧就进主界面，不在启动页停：没登录 → 游客；有上次的账号信息 → 先当已登录，确认在后台做。
     // 只有存了 cookie 却没有账号信息（刚登录完就被杀掉）时才在启动页等确认
     final html = _store.userHtml;
