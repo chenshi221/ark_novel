@@ -190,16 +190,38 @@ class _BodyState extends ConsumerState<_Body> {
         Row(
           children: [
             Expanded(
+              flex: 3,
               child: FilledButton(
+                style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56), padding: const EdgeInsets.symmetric(horizontal: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
                 onPressed: startCid == null ? null : () => _open(Routes.reader(aid, startCid)),
-                child: Text(progress == null ? '开始阅读' : '继续阅读'),
+                child: Row(
+                  children: [
+                    const Icon(Icons.play_arrow_rounded, size: 26),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(progress == null ? '开始阅读' : '继续阅读', style: const TextStyle(fontWeight: FontWeight.w700)),
+                          // 读到哪一章写在按钮里，不用点进去才知道
+                          if (all.where((c) => c.cid == startCid).firstOrNull?.title case final t?)
+                            Text(t, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onPrimary.withValues(alpha: 0.8))),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: OutlinedButton(
+              flex: 2,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(56), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
                 onPressed: () => _toggleShelf(inLib),
-                child: Text(inLib ? '移出书架' : '加入书架'),
+                icon: Icon(inLib ? Icons.bookmark_remove_outlined : Icons.bookmark_add_outlined, size: 20),
+                label: Text(inLib ? '移出书架' : '加入书架'),
               ),
             ),
           ],
@@ -331,12 +353,13 @@ class _BodyState extends ConsumerState<_Body> {
                           context: context,
                           builder: (context) => AlertDialog(
                             title: Text(isDone ? '取消「${v.title}」的已读？' : '把「${v.title}」标为已读？'),
-                            content: Text(isDone ? '这一卷的正文章节会全部标回未读。' : '这一卷的正文章节会全部标为已读。'),
+                            content: Text(isDone ? '这一卷的章节（含插图）会全部标回未读。' : '这一卷的章节（含插图）会全部标为已读。'),
                             actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('确定'))],
                           ),
                         );
                         if (ok != true) return;
-                        await ReadState.setRead(aid, Vol.from(v).textCids, !isDone);
+                        // 插图章不算进"读完"，但手动标记时一起标，否则目录里总剩一章未读
+                        await ReadState.setRead(aid, Vol.from(v).cids, !isDone);
                         if (mounted) setState(() {});
                       },
                     );
@@ -391,9 +414,6 @@ class _BodyState extends ConsumerState<_Body> {
                 children: [
                   IconButton(tooltip: '取消', icon: const Icon(Icons.close), onPressed: () => setState(_picked.clear)),
                   Expanded(child: Text('已选 ${_picked.length} 章', maxLines: 1, overflow: TextOverflow.ellipsis)),
-                  // 从第一章选到已选的最后一章，方便"之前的全部标为已读"
-                  TextButton(onPressed: () => setState(() => _picked.addAll(all.take(all.lastIndexWhere((c) => _picked.contains(c.cid)) + 1).map((c) => c.cid))), child: const Text('选到开头')),
-                  if (_picked.length == 1) TextButton(onPressed: _markBefore, child: const Text('前面已读')),
                   TextButton(onPressed: () => _markPicked(true), child: const Text('已读')),
                   TextButton(onPressed: () => _markPicked(false), child: const Text('未读')),
                   TextButton(
@@ -403,6 +423,16 @@ class _BodyState extends ConsumerState<_Body> {
                       setState(_picked.clear);
                     },
                     child: const Text('缓存'),
+                  ),
+                  // 按钮全摆出来窄屏放不下，不常用的收进"更多"
+                  PopupMenuButton<void Function()>(
+                    tooltip: '更多',
+                    onSelected: (f) => f(),
+                    itemBuilder: (_) => [
+                      // 从第一章选到已选的最后一章，方便"之前的全部标为已读"
+                      PopupMenuItem(value: () => setState(() => _picked.addAll(all.take(all.lastIndexWhere((c) => _picked.contains(c.cid)) + 1).map((c) => c.cid))), child: const Text('选到开头')),
+                      if (_picked.length == 1) PopupMenuItem(value: _markBefore, child: const Text('前面的标为已读')),
+                    ],
                   ),
                 ],
               ),

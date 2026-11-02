@@ -11,6 +11,7 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 import '../app_prefs.dart';
 import '../bookmarks.dart';
 import '../cache.dart';
+import '../cover_color.dart';
 import '../data.dart';
 import '../history.dart';
 import '../image_cache.dart';
@@ -511,14 +512,24 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
 }
 
 /// 书架顶上的「继续阅读」：最近读的一本，点了直接进阅读器（返回回到书架）；关掉后，读到别的书时再出现。
+/// 像音乐 App 的"正在播放"：底色取封面的色调，封面、书名、读到的章节、整本的进度，右边一个大的继续按钮。
 /// 往下滑书架时收起（[hidden]），不一直挡着；设置里可以整个关掉。
-class _ResumeBar extends StatelessWidget {
+class _ResumeBar extends ConsumerWidget {
   const _ResumeBar({required this.hidden});
 
   final bool hidden;
 
+  static String _ago(DateTime t) {
+    final d = DateTime.now().difference(t);
+    if (d.inMinutes < 1) return '刚刚';
+    if (d.inHours < 1) return '${d.inMinutes} 分钟前';
+    if (d.inDays < 1) return '${d.inHours} 小时前';
+    if (d.inDays < 30) return '${d.inDays} 天前';
+    return '${t.month} 月 ${t.day} 日';
+  }
+
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder(
+  Widget build(BuildContext context, WidgetRef ref) => ValueListenableBuilder(
     valueListenable: Hive.box('session').listenable(keys: ['history2', 'resumeClosed']),
     builder: (context, box, _) {
       final h = ReadingHistory.all().firstOrNull;
@@ -527,33 +538,90 @@ class _ResumeBar extends StatelessWidget {
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
         alignment: Alignment.topCenter,
-        child: show ? _bar(context, box, h) : const SizedBox(width: double.infinity),
+        child: show ? _bar(context, ref, box, h) : const SizedBox(width: double.infinity),
       );
     },
   );
 
-  Widget _bar(BuildContext context, Box box, HistoryEntry h) {
+  Widget _bar(BuildContext context, WidgetRef ref, Box box, HistoryEntry h) {
+    ref.watch(volumeChangesProvider); // 取到高清封面后换上
+    final cover = ref.read(volumeCoverQueueProvider).bookCover(h.aid, h.img);
+    final tint = ref.watch(coverColorProvider(cover)).value ?? savedCoverColor(cover) ?? kNeutralCoverColor;
+    final total = Volumes.of(h.aid).fold(0, (a, v) => a + v.cids.length);
+    final progress = total == 0 ? null : (ReadState.readCount(h.aid) / total).clamp(0.0, 1.0);
     final theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.surfaceContainerLow,
-      child: InkWell(
-        onTap: () => context.push(Routes.reader(h.aid, h.cid)),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 6, 4, 6),
-          child: Row(
+    void open() => context.push(Routes.reader(h.aid, h.cid));
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      child: TweenAnimationBuilder<Color?>(
+        tween: ColorTween(end: tint),
+        duration: const Duration(milliseconds: 400),
+        builder: (context, color, child) => Material(
+          color: color,
+          borderRadius: BorderRadius.circular(18),
+          clipBehavior: Clip.antiAlias,
+          child: child,
+        ),
+        child: InkWell(
+          onTap: open,
+          onLongPress: () => context.push(Routes.novel(h.aid)),
+          child: Stack(
             children: [
-              SizedBox(width: 28, height: 38, child: CoverImage(h.img)),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
+                child: Row(
                   children: [
-                    Text(LibraryStore.shown(h.aid, h.title), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-                    Text('继续读 ${h.chapter}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                    Container(
+                      width: 46,
+                      height: 64,
+                      decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 8, offset: Offset(0, 3))]),
+                      clipBehavior: Clip.antiAlias,
+                      child: CoverImage(cover),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('继续阅读 · ${_ago(h.time)}', style: theme.textTheme.labelSmall?.copyWith(color: Colors.white60, letterSpacing: 0.5)),
+                          const SizedBox(height: 2),
+                          Text(LibraryStore.shown(h.aid, h.title), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleSmall?.copyWith(color: Colors.white, fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 2),
+                          Text(h.chapter, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: Colors.white70)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      tooltip: '继续阅读',
+                      style: IconButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black87, fixedSize: const Size(46, 46)),
+                      icon: const Icon(Icons.play_arrow_rounded, size: 28),
+                      onPressed: open,
+                    ),
                   ],
                 ),
               ),
-              IconButton(tooltip: '关闭', visualDensity: VisualDensity.compact, icon: const Icon(Icons.close, size: 18), onPressed: () => box.put('resumeClosed', h.aid)),
+              Positioned(
+                top: 0,
+                right: 0,
+                child: IconButton(
+                  tooltip: '关闭',
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 14,
+                  color: Colors.white54,
+                  icon: const Icon(Icons.close),
+                  onPressed: () => box.put('resumeClosed', h.aid),
+                ),
+              ),
+              // 整本读了多少（按章数）
+              if (progress != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: LinearProgressIndicator(value: progress, minHeight: 3, color: Colors.white.withValues(alpha: 0.85), backgroundColor: Colors.white.withValues(alpha: 0.15)),
+                ),
             ],
           ),
         ),

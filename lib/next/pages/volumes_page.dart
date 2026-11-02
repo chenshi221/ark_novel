@@ -778,14 +778,19 @@ class _DetailsState extends State<_Details> {
                         Expanded(
                           child: Text('已选 ${_picked.length} 章', style: const TextStyle(color: Colors.white)),
                         ),
-                        // 从这一卷第一章选到已选的最后一章
-                        TextButton(
-                          onPressed: () => setState(() => _picked.addAll(v.cids.take(v.cids.lastIndexWhere(_picked.contains) + 1))),
-                          child: const Text('选到开头'),
-                        ),
-                        if (_picked.length == 1) TextButton(onPressed: _markBefore, child: const Text('前面已读')),
                         TextButton(onPressed: () => _mark(true), child: const Text('已读')),
                         TextButton(onPressed: () => _mark(false), child: const Text('未读')),
+                        // 按钮全摆出来窄屏放不下，不常用的收进"更多"
+                        PopupMenuButton<void Function()>(
+                          tooltip: '更多',
+                          iconColor: Colors.white,
+                          onSelected: (f) => f(),
+                          itemBuilder: (_) => [
+                            // 从这一卷第一章选到已选的最后一章
+                            PopupMenuItem(value: () => setState(() => _picked.addAll(v.cids.take(v.cids.lastIndexWhere(_picked.contains) + 1))), child: const Text('选到开头')),
+                            if (_picked.length == 1) PopupMenuItem(value: _markBefore, child: const Text('前面的标为已读')),
+                          ],
+                        ),
                       ],
                     ),
                   ),

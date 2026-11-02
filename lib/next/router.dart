@@ -68,7 +68,8 @@ final routerProvider = Provider<GoRouter>((ref) {
   ref.onDispose(refresh.dispose);
 
   return GoRouter(
-    initialLocation: Routes.splash,
+    // 登录状态本地就能定下来时直接进书架，连一帧启动页都不画
+    initialLocation: ref.read(sessionProvider) is SessionChecking ? Routes.splash : Routes.bookshelf,
     refreshListenable: refresh,
     redirect: (context, state) {
       final checking = ref.read(sessionProvider) is SessionChecking;
