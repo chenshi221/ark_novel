@@ -19,6 +19,18 @@ import kotlin.math.roundToInt
 class Upscaler(private val context: Context) {
     private val worker = Executors.newSingleThreadExecutor()
 
+    private val modelBuffer: ByteBuffer by lazy {
+        val fileDescriptor = context.assets.openFd("sr_x4.tflite")
+        java.io.FileInputStream(fileDescriptor.fileDescriptor).use { inputStream ->
+            val fileChannel = inputStream.channel
+            fileChannel.map(
+                java.nio.channels.FileChannel.MapMode.READ_ONLY,
+                fileDescriptor.startOffset,
+                fileDescriptor.declaredLength
+            )
+        }
+    }
+
     fun upscale(input: ByteArray, done: (ByteArray?, String?) -> Unit) = worker.execute {
         try {
             done(run(input), null)
@@ -48,9 +60,7 @@ class Upscaler(private val context: Context) {
         val ow = w * SCALE
         val oh = h * SCALE
         val outBuf = ByteBuffer.allocateDirect(ow * oh * 3 * 4).order(ByteOrder.nativeOrder())
-        val model = context.assets.open("sr_x4.tflite").use { it.readBytes() }
-        val modelBuf = ByteBuffer.allocateDirect(model.size).order(ByteOrder.nativeOrder()).put(model).also { it.rewind() }
-        Interpreter(modelBuf, Interpreter.Options().setNumThreads(4)).use { interp ->
+        Interpreter(modelBuffer, Interpreter.Options().setNumThreads(4)).use { interp ->
             interp.resizeInput(0, intArrayOf(1, h, w, 3))
             interp.allocateTensors()
             interp.run(inBuf, outBuf)

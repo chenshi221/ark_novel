@@ -588,7 +588,11 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       const XGroupTitle('连接'),
       Padding(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
-        child: TextFormField(initialValue: store.proxy, decoration: const InputDecoration(labelText: 'HTTP 代理', hintText: '127.0.0.1:7890'), onChanged: store.setProxy),
+        child: TextFormField(
+          initialValue: ref.watch(proxyProvider),
+          decoration: const InputDecoration(labelText: 'HTTP 代理', hintText: '127.0.0.1:7890'),
+          onChanged: (v) => ref.read(proxyProvider.notifier).set(v),
+        ),
       ),
       XSwitch(
         title: '系统网络栈',

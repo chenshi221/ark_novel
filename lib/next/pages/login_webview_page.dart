@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -121,7 +122,7 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
     return r == 'ok' ? null : '$r';
   }
 
-  static String _js(String s) => "'${s.replaceAll(r'\', r'\\').replaceAll("'", r"\'").replaceAll('\n', r'\n').replaceAll('\r', '')}'";
+  static String _js(String s) => jsonEncode(s);
 
   /// 站点可能跳到 http 页面（例如 http 的 login.php，会被系统拦成报错页），按 http 地址取不到 Secure 的 `cf_clearance`，统一按 https 取
   Future<List<Cookie>> _cookiesOf(WebUri uri) => _cookieManager.getCookies(url: uri.scheme == 'http' ? WebUri.uri(uri.replace(scheme: 'https')) : uri);

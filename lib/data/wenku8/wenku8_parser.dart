@@ -127,37 +127,57 @@ class Wenku8Parser {
   static Wenku8NovelDetail novelDetail(String html) {
     final Element? t1 = parse(html).getElementById('content');
     if (t1 == null) throw const Wenku8UnexpectedPageException("novel detail: #content not found");
-    final Element t2 = t1.getElementsByTagName('table')[0];
+    final tables = t1.getElementsByTagName('table');
+    if (tables.isEmpty) throw const Wenku8UnexpectedPageException("novel detail: table not found");
+    final Element t2 = tables[0];
     final String title = t2.querySelector('span > b')?.text.trim() ?? '';
-    final tds = t2.getElementsByTagName('tr')[2].getElementsByTagName('td');
-    final String author = tds[1].text.trim().substring(5);
-    final String status = tds[2].text.trim().substring(5);
+    final trs = t2.getElementsByTagName('tr');
+    final tds = trs.length > 2 ? trs[2].getElementsByTagName('td') : <Element>[];
+    String author = '';
+    String status = '';
     String? lastUpdate;
-    try {
-      lastUpdate = tds[3].text.trim().substring(5);
-    } catch (_) {
-      lastUpdate = null; // 没有"最后更新"一栏说明已下架
+    if (tds.length > 1) {
+      final t = tds[1].text.trim();
+      author = t.length >= 5 ? t.substring(5) : t;
+    }
+    if (tds.length > 2) {
+      final t = tds[2].text.trim();
+      status = t.length >= 5 ? t.substring(5) : t;
+    }
+    if (tds.length > 3) {
+      final t = tds[3].text.trim();
+      lastUpdate = t.length >= 5 ? t.substring(5) : null;
     }
 
-    final String imgUrl = ImageUrlHelper.normalize(t1.getElementsByTagName('img')[0].attributes['src'] ?? '');
-    final table2 = t1.getElementsByTagName('table')[2];
-    final spans = table2.getElementsByTagName('td')[1].getElementsByTagName('span');
+    final imgs = t1.getElementsByTagName('img');
+    final String imgUrl = imgs.isNotEmpty ? ImageUrlHelper.normalize(imgs[0].attributes['src'] ?? '') : '';
+    final table2 = tables.length > 2 ? tables[2] : null;
+    final table2Tds = table2?.getElementsByTagName('td') ?? <Element>[];
+    final spans = table2Tds.length > 1 ? table2Tds[1].getElementsByTagName('span') : <Element>[];
     String introduce = spans.length > 5 ? spans[5].innerHtml.replaceAll("<br>", "\n") : "";
-    final String tag = spans[0].text;
-    final String tempHeat = spans[1].text;
-    final firstTdSpans = table2.getElementsByTagName('td')[0].getElementsByTagName('span');
+    final String tag = spans.isNotEmpty ? spans[0].text : '';
+    final String tempHeat = spans.length > 1 ? spans[1].text : '';
+    final firstTdSpans = table2Tds.isNotEmpty ? table2Tds[0].getElementsByTagName('span') : <Element>[];
     final bool isAnimated = firstTdSpans.isNotEmpty;
 
     String? heat;
     String? trending;
     if (lastUpdate == null) {
-      introduce = tempHeat; // 下架书籍的简介在这个位置
+      introduce = tempHeat.isNotEmpty ? tempHeat : introduce; // 下架书籍的简介在这个位置
     } else {
-      heat = tempHeat.substring(5, 7);
-      trending = tempHeat.length >= 20 ? tempHeat.substring(18, 20) : tempHeat.substring(18, 19);
+      if (tempHeat.length >= 7) {
+        heat = tempHeat.substring(5, 7);
+      } else if (tempHeat.length >= 5) {
+        heat = tempHeat.substring(5);
+      }
+      if (tempHeat.length >= 20) {
+        trending = tempHeat.substring(18, 20);
+      } else if (tempHeat.length >= 19) {
+        trending = tempHeat.substring(18, 19);
+      }
     }
 
-    final tags = tag.replaceRange(0, 7, "").split(" ");
+    final tags = (tag.length >= 7 ? tag.substring(7) : tag).split(" ").where((t) => t.isNotEmpty).toList();
 
     return Wenku8NovelDetail(
       title: title,

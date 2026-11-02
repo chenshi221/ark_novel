@@ -268,9 +268,7 @@ class VolumeCoverQueue {
             _fillFromBangumi(aid).ignore();
             continue;
           } catch (_) {
-            _queue.clear();
-            _bg.clear(); // 网络出问题就先停，下次打开 App 再接着取
-            return;
+            continue; // 单本网络或内容出错跳过，不影响队列里其他书的获取
           }
           await ChapterCache.put(aid, v.illus!, content);
           await Future<void>.delayed(const Duration(milliseconds: 1500));
@@ -279,9 +277,7 @@ class VolumeCoverQueue {
         try {
           url = await _trimmed(await chooseCover(content.images, _size));
         } catch (_) {
-          _queue.clear(); // 图片下不下来，多半是网络问题，下次再说
-          _bg.clear();
-          return;
+          continue;
         }
         await Volumes.setCover(aid, title, url);
         await _dropSkipped(aid, v, content.images);

@@ -96,6 +96,26 @@ void main() {
     expect(d.isAnimated, isFalse);
   });
 
+  test('详情：短字段或异常排版页面不抛 RangeError', () {
+    const html = '''
+    <div id="content">
+      <table>
+        <tr></tr><tr></tr>
+        <tr><td></td><td>文库作者</td><td>连载中</td><td>2024</td></tr>
+      </table>
+      <img src="/test.jpg">
+      <table>
+        <tr></tr><tr></tr>
+        <tr><td></td><td><span>短标签</span><span>短热度</span></td></tr>
+      </table>
+    </div>
+    ''';
+    final d = Wenku8Parser.novelDetail(html);
+    expect(d.author, '文库作者');
+    expect(d.status, '连载中');
+    expect(d.lastUpdate, isNull);
+  });
+
   test('书评列表', () {
     final c = Wenku8Parser.comments(fixture('comments.html')).single;
     expect(c.rid, '555');

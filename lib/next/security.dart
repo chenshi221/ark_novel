@@ -45,6 +45,18 @@ class _AppGuardState extends ConsumerState<AppGuard> with WidgetsBindingObserver
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     if (_locked) WidgetsBinding.instance.addPostFrameCallback((_) => _unlock());
+    if (secureScreenSupported) WidgetsBinding.instance.addPostFrameCallback((_) => _syncSecure());
+  }
+
+  void _syncSecure() {
+    if (!secureScreenSupported) return;
+    final incognito = ref.read(incognitoProvider);
+    final mode = AppPrefs.read(P.secure, 0);
+    final want = mode == 1 || (mode == 2 && incognito);
+    if (want != _secureOn) {
+      _secureOn = want;
+      _secure.invokeMethod('setSecure', {'secure': want}).ignore();
+    }
   }
 
   @override
@@ -78,16 +90,8 @@ class _AppGuardState extends ConsumerState<AppGuard> with WidgetsBindingObserver
 
   @override
   Widget build(BuildContext context) {
-    ref.watch(appPrefsProvider);
-    final incognito = ref.watch(incognitoProvider);
-    if (secureScreenSupported) {
-      final mode = AppPrefs.read(P.secure, 0);
-      final want = mode == 1 || (mode == 2 && incognito);
-      if (want != _secureOn) {
-        _secureOn = want;
-        _secure.invokeMethod('setSecure', {'secure': want}).ignore();
-      }
-    }
+    ref.listen(appPrefsProvider, (_, _) => _syncSecure());
+    ref.listen(incognitoProvider, (_, _) => _syncSecure());
     return Stack(
       children: [
         widget.child,

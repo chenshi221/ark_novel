@@ -189,8 +189,9 @@ class BangumiCovers {
 
 final bangumiProvider = Provider<BangumiCovers>((ref) {
   final store = ref.watch(sessionStoreProvider);
+  final proxy = ref.watch(proxyProvider);
   // Bangumi 要求带上说明是哪个程序的 User-Agent
   final dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 10), receiveTimeout: const Duration(seconds: 20), headers: {'User-Agent': 'ark_novel (https://github.com/chenshi221/ark_novel)'}))
-    ..httpClientAdapter = store.adapter();
+    ..httpClientAdapter = store.adapter(proxyOverride: proxy);
   return BangumiCovers(dio);
 });

@@ -62,9 +62,10 @@ class SessionStore {
 
   Future<void> setNativeNet(bool value) => _box.put('nativeNet', value);
 
-  HttpClientAdapter adapter() {
-    HttpClientAdapter io() => IOHttpClientAdapter(createHttpClient: () => HttpClient()..findProxy = (_) => proxy.isEmpty ? 'DIRECT' : 'PROXY $proxy');
-    return nativeNet && proxy.isEmpty ? (nativeAdapter(io) ?? io()) : io();
+  HttpClientAdapter adapter({String? proxyOverride}) {
+    final p = proxyOverride ?? proxy;
+    HttpClientAdapter io() => IOHttpClientAdapter(createHttpClient: () => HttpClient()..findProxy = (_) => p.isEmpty ? 'DIRECT' : 'PROXY $p');
+    return nativeNet && p.isEmpty ? (nativeAdapter(io) ?? io()) : io();
   }
 
   Future<void> setUserAgent(String ua) => _box.put('ua', ua);
@@ -134,28 +135,49 @@ class NodeController extends Notifier<Wenku8Node> {
 
 final nodeProvider = NotifierProvider<NodeController, Wenku8Node>(NodeController.new);
 
+/// 当前 HTTP 代理配置控制器。
+class HttpProxyController extends Notifier<String> {
+  @override
+  String build() => ref.read(sessionStoreProvider).proxy;
+
+  Future<void> set(String proxy) async {
+    final trimmed = proxy.trim();
+    await ref.read(sessionStoreProvider).setProxy(trimmed);
+    state = trimmed;
+  }
+}
+
+final proxyProvider = NotifierProvider<HttpProxyController, String>(HttpProxyController.new);
+
 /// 当前用于请求的站点地址：网页预览走转发程序，原生 App 直连所选节点。
 String siteBase(Wenku8Node node) => isWebPreview ? previewProxyBase : node.node;
 
 final wenku8ClientProvider = Provider<Wenku8Client>((ref) {
   final store = ref.watch(sessionStoreProvider);
-  return Wenku8Client(
+  final client = Wenku8Client(
     // 用 read：客户端自己带着 cookie jar，节点变了只换地址，不能重建
     baseUrl: () => siteBase(ref.read(nodeProvider)),
     charset: () => CharsetType.gbk,
     // 浏览器不允许网页设置 User-Agent，由转发程序代为添加
     headers: kIsWeb ? const {} : {'User-Agent': store.userAgent},
-    dio: kIsWeb ? null : (Dio()..httpClientAdapter = store.adapter()),
-    challengeFallback: kIsWeb ? null : webFetch,
+    dio: kIsWeb ? null : (Dio()..httpClientAdapter = store.adapter(proxyOverride: ref.read(proxyProvider))),
+    challengeFallback: kIsWeb ? null : (url, {referer}) => webFetch(url, referer: referer, proxy: ref.read(proxyProvider)),
   );
+  ref.listen(proxyProvider, (_, next) {
+    if (!kIsWeb) {
+      client.dio.httpClientAdapter = store.adapter(proxyOverride: next);
+    }
+  });
+  return client;
 });
 
 /// 图片专用的 Dio：和请求页面一样走所选代理，并带上浏览器 UA 和 Referer（图片服务器会检查）。
 final imageDioProvider = Provider<Dio>((ref) {
   final store = ref.watch(sessionStoreProvider);
   final node = ref.watch(nodeProvider);
+  final proxy = ref.watch(proxyProvider);
   return Dio(BaseOptions(responseType: ResponseType.bytes, connectTimeout: const Duration(seconds: 12), receiveTimeout: const Duration(seconds: 25), headers: {'User-Agent': store.userAgent, 'Referer': '${siteBase(node)}/'}))
-    ..httpClientAdapter = store.adapter();
+    ..httpClientAdapter = store.adapter(proxyOverride: proxy);
 });
 
 final wenku8UrlsProvider = Provider<Wenku8Urls>((ref) => Wenku8Urls(siteBase(ref.watch(nodeProvider)), CharsetType.gbk));

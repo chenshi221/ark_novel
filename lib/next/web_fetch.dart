@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:dio/dio.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -13,13 +14,18 @@ const _gap = Duration(seconds: 1);
 /// App 自己的请求被 Cloudflare 拦下时，改用不显示的网页加载同一地址并取整页 HTML。
 /// 网页是真浏览器，Cloudflare 通常直接放行；cookie 和登录用的网页共用，登录状态自然带上。
 /// 一次只开一个网页，其余排队。网页也过不去（一直停在验证页）就照旧抛 [CloudflareChallengeException]，让界面提示去验证。
-Future<String> webFetch(String url, {String? referer}) {
-  final result = _tail.then((_) => _load(url, referer));
+Future<String> webFetch(String url, {String? referer, String? proxy}) {
+  final result = _tail.then((_) => _load(url, referer, proxy));
   _tail = result.then<void>((_) {}, onError: (_) {}).then((_) => Future<void>.delayed(_gap));
   return result;
 }
 
-Future<String> _load(String url, String? referer) async {
+Future<String> _load(String url, String? referer, String? proxy) async {
+  if (Platform.isAndroid && proxy != null && proxy.isNotEmpty) {
+    try {
+      await ProxyController.instance().setProxyOverride(settings: ProxySettings(proxyRules: [ProxyRule(url: 'http://$proxy')]));
+    } catch (_) {}
+  }
   final done = Completer<String>();
   final view = HeadlessInAppWebView(
     initialUrlRequest: URLRequest(url: WebUri(url), headers: referer == null ? null : {'Referer': referer}),

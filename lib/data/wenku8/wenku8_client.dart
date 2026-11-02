@@ -148,7 +148,7 @@ class _ThrottleInterceptor extends Interceptor {
   static const _gap = Duration(milliseconds: 120);
 
   int _active = 0;
-  DateTime _last = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _nextAllowed = DateTime.fromMillisecondsSinceEpoch(0);
   final _waiters = Queue<Completer<void>>();
 
   @override
@@ -156,15 +156,34 @@ class _ThrottleInterceptor extends Interceptor {
     if (_active >= _maxActive) {
       final c = Completer<void>();
       _waiters.add(c);
-      await c.future;
+      try {
+        await c.future;
+      } catch (_) {
+        _waiters.remove(c);
+        rethrow;
+      }
     } else {
       _active++;
     }
-    final wait = _gap - DateTime.now().difference(_last);
-    if (!wait.isNegative) await Future<void>.delayed(wait);
-    _last = DateTime.now();
     options.extra['throttled'] = true;
-    handler.next(options);
+
+    try {
+      final now = DateTime.now();
+      final scheduled = _nextAllowed.isAfter(now) ? _nextAllowed : now;
+      _nextAllowed = scheduled.add(_gap);
+      final wait = scheduled.difference(now);
+      if (!wait.isNegative && wait > Duration.zero) {
+        await Future<void>.delayed(wait);
+      }
+      handler.next(options);
+    } catch (e) {
+      _release(options);
+      if (e is DioException) {
+        handler.reject(e);
+      } else {
+        rethrow;
+      }
+    }
   }
 
   void _release(RequestOptions options) {

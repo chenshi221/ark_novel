@@ -821,7 +821,7 @@ class _PagedBodyState extends State<PagedBody> {
         final size = Size(box.maxWidth / cols - pad.horizontal, box.maxHeight - pad.vertical);
         PagedBody.lastLayout = (size, cols);
         // 同样的版面（大小、样式、正文）不重复分页；开关菜单栏、拖滑块这类重建不会触发全文排版
-        final sig = Object.hash(size, cols, widget.style, _c.text.length, _c.text.hashCode, widget.title);
+        final sig = Object.hash(size, cols, widget.style, _c.text.length, identityHashCode(_c), widget.title);
         if (sig != _sig) {
           final keep = _sig == null ? widget.startOffset : _cur;
           _sig = sig;
