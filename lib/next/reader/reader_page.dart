@@ -61,6 +61,7 @@ final chapterProvider = FutureProvider.autoDispose.family<Chapter, (String, Stri
   var raw = await ChapterCache.get(key.$1, key.$2);
   if (raw != null && isLockedContent(raw) && ref.read(unlockServiceProvider).enabled) raw = null; // 以前存下的「因版权问题…」，重新取
   if (raw == null) {
+    final ticket = ChapterCache.ticket(key.$1, key.$2);
     try {
       raw = await ref.read(apiProvider).chapter(key.$1, key.$2);
     } on ChapterLockedException catch (e) {
@@ -68,9 +69,9 @@ final chapterProvider = FutureProvider.autoDispose.family<Chapter, (String, Stri
       final text = formatChapter(e.message);
       return Chapter(text: text, images: const [], marks: ReplaceRules.marks(text, null, key.$1));
     }
-    // 读过的章节顺手存下来，断网也能再看；写失败不影响阅读
+    // 读过的章节顺手存下来，断网也能再看；写失败不影响阅读。取的这会儿刚好清了缓存的话不写回去
     try {
-      await ChapterCache.put(key.$1, key.$2, raw);
+      await ChapterCache.put(key.$1, key.$2, raw, ticket: ticket);
     } catch (_) {}
   }
   final text = formatChapter(ReplaceRules.apply(raw.text));

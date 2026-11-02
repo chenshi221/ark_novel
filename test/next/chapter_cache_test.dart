@@ -68,4 +68,23 @@ void main() {
     await Hive.box('session').put('read:4', ['a', 'b']); // 同步、导入直接写 Box
     expect(ReadState.readCount('4'), 2);
   });
+
+  test('取正文期间删了缓存：晚到的结果不写回去', () async {
+    // 整本删除
+    final t1 = ChapterCache.ticket('5', 'a');
+    await ChapterCache.remove('5');
+    expect(await ChapterCache.put('5', 'a', Content(text: '晚到', images: []), ticket: t1), isFalse);
+    expect(ChapterCache.has('5', 'a'), isFalse);
+
+    // 只删一章：别的章照常写
+    await ChapterCache.put('5', 'b', Content(text: 'b', images: []));
+    final tb = ChapterCache.ticket('5', 'b'), tc = ChapterCache.ticket('5', 'c');
+    await ChapterCache.removeChapters('5', ['b']);
+    expect(await ChapterCache.put('5', 'b', Content(text: 'b', images: []), ticket: tb), isFalse);
+    expect(await ChapterCache.put('5', 'c', Content(text: 'c', images: []), ticket: tc), isTrue);
+    expect(ChapterCache.count('5'), 1);
+
+    // 删除之后新取的凭证照常能写
+    expect(await ChapterCache.put('5', 'b', Content(text: 'b', images: []), ticket: ChapterCache.ticket('5', 'b')), isTrue);
+  });
 }
