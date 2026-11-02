@@ -76,7 +76,10 @@ class SessionStore {
 
   Future<void> setUserAgent(String ua) => _box.put('ua', ua);
 
-  Wenku8Node get node => Wenku8Node.values[(_box.get('node') as int?) ?? Wenku8Node.wwwWenku8Cc.index];
+  Wenku8Node get node {
+    final i = _box.get('node') as int?;
+    return i != null && i >= 0 && i < Wenku8Node.values.length ? Wenku8Node.values[i] : Wenku8Node.wwwWenku8Cc;
+  }
 
   /// 最近一次成功取到的用户页 HTML，断网时用它显示登录状态。
   String? get userHtml => _box.get('userHtml') as String?;
@@ -179,7 +182,14 @@ final wenku8ClientProvider = Provider<Wenku8Client>((ref) {
     // 浏览器不允许网页设置 User-Agent，由转发程序代为添加
     headers: kIsWeb ? const {} : {'User-Agent': store.userAgent},
     dio: kIsWeb ? null : (Dio()..httpClientAdapter = store.adapter()),
-    challengeFallback: kIsWeb ? null : (url, {referer}) => webFetch(url, referer: referer, proxy: ref.read(proxyProvider)),
+    challengeFallback: kIsWeb
+        ? null
+        : (url, {referer}) => webFetch(
+            url,
+            referer: referer,
+            proxy: ref.read(proxyProvider),
+            onSession: (cookies, ua) => ref.read(sessionProvider.notifier).acceptWebCookies(cookies, userAgent: ua),
+          ),
   );
   // shortcut: 换代理时旧适配器不关（Cronet 有请求在途时关闭可能出错），只有手动改代理才多留一个，真成问题再等请求结束后关
   if (!kIsWeb) ref.listen(proxyProvider, (_, _) => client.dio.httpClientAdapter = store.adapter());
@@ -191,8 +201,10 @@ final imageDioProvider = Provider<Dio>((ref) {
   final store = ref.watch(sessionStoreProvider);
   final node = ref.watch(nodeProvider);
   ref.watch(proxyProvider);
-  return Dio(BaseOptions(responseType: ResponseType.bytes, connectTimeout: const Duration(seconds: 12), receiveTimeout: const Duration(seconds: 25), headers: {'User-Agent': store.userAgent, 'Referer': '${siteBase(node)}/'}))
+  final dio = Dio(BaseOptions(responseType: ResponseType.bytes, connectTimeout: const Duration(seconds: 12), receiveTimeout: const Duration(seconds: 25), headers: {'User-Agent': store.userAgent, 'Referer': '${siteBase(node)}/'}))
     ..httpClientAdapter = store.adapter();
+  ref.onDispose(dio.close);
+  return dio;
 });
 
 final wenku8UrlsProvider = Provider<Wenku8Urls>((ref) => Wenku8Urls(siteBase(ref.watch(nodeProvider)), CharsetType.gbk));
@@ -232,6 +244,17 @@ bool isCloudflare(Object e) => e is Cloudflare403Exception || e is CloudflareCha
 
 /// 登录状态。没登录也能进主界面（游客），需要账号的页面再提示登录。
 class SessionController extends Notifier<SessionState> {
+  int _restoreEpoch = 0;
+
+  static UserInfo? _tryParseUser(String? html) {
+    if (html == null) return null;
+    try {
+      return Wenku8Parser.userInfo(html);
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   SessionState build() {
     Future.microtask(restore);
@@ -239,9 +262,9 @@ class SessionController extends Notifier<SessionState> {
     ref.listen(nodeProvider, (_, _) => restore());
     // 本地就能定下来的直接给，第一帧就进主界面，不在启动页停：没登录 → 游客；有上次的账号信息 → 先当已登录，确认在后台做。
     // 只有存了 cookie 却没有账号信息（刚登录完就被杀掉）时才在启动页等确认
-    final html = _store.userHtml;
     if (_store.cookie == null) return const SessionLoggedOut();
-    return html != null ? SessionLoggedIn(Wenku8Parser.userInfo(html)) : const SessionChecking();
+    final cached = _tryParseUser(_store.userHtml);
+    return cached != null ? SessionLoggedIn(cached) : const SessionChecking();
   }
 
   final _cookiesReady = Completer<void>();
@@ -286,8 +309,10 @@ class SessionController extends Notifier<SessionState> {
   /// 启动时：有保存的登录信息就向网站确认一次（最多等 6 秒）。失效则清除；网络出错、超时、被拦截都按"离线"处理，保留 cookie。
   /// 有上次保存的账号信息就先当已登录，直接进主界面，确认在后台做，不在启动页干等。
   Future<void> restore() async {
+    final epoch = ++_restoreEpoch;
     await _restoreCookies();
     if (!_cookiesReady.isCompleted) _cookiesReady.complete();
+    if (epoch != _restoreEpoch) return;
     final startup = _startup;
     _startup = false;
     final cookie = _store.cookie;
@@ -299,15 +324,19 @@ class SessionController extends Notifier<SessionState> {
     // 验证完重新确认（afterVerify）仍走"检查中"，确认后主界面才会重新同步书架
     if (!(startup && state is SessionLoggedIn)) state = const SessionChecking();
     try {
-      state = SessionLoggedIn(await _fetchUser().timeout(const Duration(seconds: 6)));
+      final user = await _fetchUser().timeout(const Duration(seconds: 6));
+      if (epoch != _restoreEpoch) return;
+      state = SessionLoggedIn(user);
     } on Wenku8UnexpectedPageException {
+      if (epoch != _restoreEpoch) return;
       await _clear();
       state = const SessionLoggedOut(message: '登录已过期，请重新登录');
     } catch (e) {
+      if (epoch != _restoreEpoch) return;
       // 联网失败不等于没登录：有 cookie 和上次保存的账号信息就按离线登录处理
-      final html = _store.userHtml;
+      final cached = _tryParseUser(_store.userHtml);
       final verify = isCloudflare(e);
-      state = html == null ? SessionLoggedOut(needsVerify: verify) : SessionLoggedIn(Wenku8Parser.userInfo(html), offline: true, needsVerify: verify);
+      state = cached == null ? SessionLoggedOut(needsVerify: verify) : SessionLoggedIn(cached, offline: true, needsVerify: verify);
     }
   }
 
@@ -348,6 +377,7 @@ class SessionController extends Notifier<SessionState> {
   }
 
   Future<void> _confirm(String cookie) async {
+    ++_restoreEpoch;
     try {
       final user = await _fetchUser();
       await _store.setCookie(cookie);
@@ -366,6 +396,7 @@ class SessionController extends Notifier<SessionState> {
   }
 
   Future<void> logout() async {
+    ++_restoreEpoch;
     final s = state;
     if (isWebPreview) {
       try {

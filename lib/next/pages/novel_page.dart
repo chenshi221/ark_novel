@@ -304,7 +304,9 @@ class _BodyState extends ConsumerState<_Body> {
           builder: (context, c) {
             final intro = d.introduce.trim().isEmpty ? '暂无简介' : d.introduce.trim();
             final style = theme.textTheme.bodyMedium?.copyWith(height: 1.6);
-            final over = (TextPainter(text: TextSpan(text: intro, style: style), maxLines: 5, textDirection: TextDirection.ltr, textScaler: MediaQuery.textScalerOf(context))..layout(maxWidth: c.maxWidth)).didExceedMaxLines;
+            final tp = TextPainter(text: TextSpan(text: intro, style: style), maxLines: 5, textDirection: TextDirection.ltr, textScaler: MediaQuery.textScalerOf(context))..layout(maxWidth: c.maxWidth);
+            final over = tp.didExceedMaxLines;
+            tp.dispose();
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

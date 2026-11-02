@@ -70,10 +70,12 @@ final chapterProvider = FutureProvider.autoDispose.family<Chapter, (String, Stri
       final text = formatChapter(e.message);
       return Chapter(text: text, images: const [], marks: ReplaceRules.marks(text, null, key.$1));
     }
-    // 读过的章节顺手存下来，断网也能再看；写失败不影响阅读。取的这会儿刚好清了缓存的话不写回去
-    try {
-      await ChapterCache.put(key.$1, key.$2, raw, ticket: ticket);
-    } catch (_) {}
+    // 读过的章节顺手存下来，断网也能再看；写失败不影响阅读。取的这会儿刚好清了缓存、或者开启了无痕阅读时不写回去
+    if (!Incognito.on) {
+      try {
+        await ChapterCache.put(key.$1, key.$2, raw, ticket: ticket);
+      } catch (_) {}
+    }
   }
   final text = formatChapter(ReplaceRules.apply(raw.text));
   return Chapter(text: text, images: raw.images, marks: ReplaceRules.marks(text, null, key.$1));
@@ -271,14 +273,17 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
       if (call.method == (inv ? 'volumeDown' : 'volumeUp')) _nav.prev?.call();
     });
     _tick();
-    _clock = Timer.periodic(const Duration(minutes: 1), (_) => _tick());
+    _clock = Timer.periodic(const Duration(minutes: 1), (_) {
+      _tick();
+      if (!_background || _speaking) _flushStats();
+    });
     _initial = widget.offset;
     _doneAtOpen = Volumes.done(widget.aid).keys.toSet();
     FontStore.ready.addListener(_onFontReady);
     WidgetsBinding.instance.addObserver(this);
     _applyChrome(ref.read(readerPrefsProvider));
     _tts.setCompletionHandler(() {
-      if (DateTime.now().difference(_jumped).inMilliseconds < 400) return;
+      if (!mounted || !_speaking || _paused || DateTime.now().difference(_jumped).inMilliseconds < 400) return;
       _si++;
       _speakNext();
     });
@@ -297,8 +302,11 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     _clock?.cancel();
     _status.dispose();
     _pos.dispose();
+    _nav.page.dispose();
     _turnTimer?.cancel();
+    _tts.setCompletionHandler(() {});
     _tts.stop();
+    _notice?.clearCallbacks();
     if (_speaking) _notice?.hide();
     WidgetsBinding.instance.removeObserver(this);
     _flushStats();
@@ -399,6 +407,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     final next = _nextIn(chapters, chapters.indexWhere((c) => c.cid == _cid), prefs);
     if (next == null || _stopAtChapterEnd || !prefs.ttsAutoNext) return _stopTts();
     _nextChapter = next;
+    _segs = const [];
+    _ttsText = '';
     _go(next.cid, keepTts: true);
     // 不等界面重建，直接取下一章接着读（熄屏时界面不重建）
     try {
@@ -411,7 +421,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
 
   /// 上一句 / 下一句。
   void _skipSentence(int delta) {
-    if (!_speaking) return;
+    if (!_speaking || _segs.isEmpty) return;
     _si = (_si + delta).clamp(0, _segs.length - 1);
     _jumped = DateTime.now();
     _speakNext();
@@ -427,6 +437,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     _sleepAt = null;
     _stopAtChapterEnd = false;
     await _tts.stop();
+    _notice?.clearCallbacks();
     _notice?.hide();
     if (mounted) setState(() => _speaking = false);
   }
@@ -476,7 +487,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   /// 跳到某章的某个位置。[offset] 默认章首；往前翻章时传 [kToEnd]，落在上一章的最后一页。
   /// 手动切章会停掉朗读（[keepTts] 是朗读自己读完一章后的自动续读）；往后翻时把离开的这章标为已读。
   void _go(String cid, {int offset = 0, bool keepTts = false}) {
-    if (cid == _cid && offset == 0) return;
+    if (cid == _cid && offset == _offset) return;
     if (cid != _cid && ref.read(readerPrefsProvider).chapterToast) {
       final t = ref.read(novelProvider(widget.aid)).value?.catalogue.expand((v) => v.chapters).where((c) => c.cid == cid).firstOrNull?.title;
       if (t != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t), duration: const Duration(seconds: 2)));
@@ -488,15 +499,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     // 往后翻出了这一卷、这卷刚好读完：换过去之后弹庆祝卡片
     final finished = forward && Volumes.indexOf(widget.aid, cid) != Volumes.indexOf(widget.aid, _cid) ? _justFinished() : null;
     if (forward) _markRead();
-    ReadingProgress.save(widget.aid, cid, offset);
+    ReadingProgress.save(widget.aid, cid, offset == kToEnd ? 0 : offset);
     final order = ref.read(novelProvider(widget.aid)).value?.catalogue.expand((v) => v.chapters).map((c) => c.cid).toList() ?? const <String>[];
     if (finished != null) WidgetsBinding.instance.addPostFrameCallback((_) => _celebrate(finished, hasNext: true));
     setState(() {
       if (cid != _cid) _dir = order.indexOf(cid) >= order.indexOf(_cid) ? 1 : -1;
-      if (cid != _cid) _offset = offset == kToEnd ? 0 : offset;
+      _offset = offset == kToEnd ? 0 : offset;
       _pos.value = _offset;
       _cid = cid;
-      _initial = null;
+      _initial = offset;
       _shown = null;
       _epoch++;
       _bar = false;
@@ -517,6 +528,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   Future<void> _celebrate(int index, {required bool hasNext}) async {
     final v = Volumes.of(widget.aid)[index];
     if (!mounted || !_celebrated.add(v.title)) return;
+    _markRead();
     _flushStats();
     final fallback = ref.read(novelProvider(widget.aid)).value?.detail.imgUrl ?? '';
     final cover = ref.read(volumeCoverQueueProvider).volCover(widget.aid, v, fallback);
@@ -672,7 +684,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     final rule = await showRuleDialog(context, initial: ReplaceRule(pattern: _patternOf(text), replacement: '', kind: RuleKind.replace));
     if (rule == null) return;
     await ReplaceRules.save([...ReplaceRules.all(), rule]);
-    ref.invalidate(chapterProvider);
+    if (mounted) ref.invalidate(chapterProvider);
   }
 
   /// 高亮选中的文字：同一本书里相同的文字只有一条高亮规则，所有出现的地方共用一份备注。随后直接打开备注框。
@@ -686,7 +698,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     if (rule == null) {
       rule = ReplaceRule(pattern: pattern, replacement: '', kind: RuleKind.highlight, color: ruleColors[2], name: text.length <= 8 ? text : '', id: 'h${DateTime.now().microsecondsSinceEpoch}', aid: widget.aid);
       await ReplaceRules.save([...rules, rule]);
-      ref.invalidate(chapterProvider);
+      if (mounted) ref.invalidate(chapterProvider);
     }
     if (mounted) await _editNote(rule);
   }
@@ -720,7 +732,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
           ? [...rules, ReplaceRule(pattern: pattern, replacement: '', kind: RuleKind.color, color: picked, id: 'c${DateTime.now().microsecondsSinceEpoch}', aid: widget.aid)]
           : [for (final r in rules) if (!identical(r, old)) r else if (picked != -1) r.copyWith(color: picked)],
     );
-    ref.invalidate(chapterProvider);
+    if (mounted) ref.invalidate(chapterProvider);
   }
 
   // 正文里鼠标拖动是选字，不滚动不翻页（翻页用滚轮、键盘、点两侧）
@@ -733,40 +745,47 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   Future<void> _editNote(ReplaceRule rule) async {
     final controller = TextEditingController(text: RuleNotes.get(widget.aid, rule.id));
     var color = rule.color;
-    final result = await showDialog<String>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setLocal) => AlertDialog(
-          title: Text(rule.label),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(controller: controller, minLines: 3, maxLines: 8, decoration: const InputDecoration(hintText: '写点备注：身份、关系、伏笔……')),
-                const SizedBox(height: 12),
-                ColorPickerField(color: color, highlight: true, sample: rule.label.length > 8 ? rule.label.substring(0, 8) : rule.label, onChanged: (c) => setLocal(() => color = c)),
-              ],
+    final String? result;
+    try {
+      result = await showDialog<String>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setLocal) => AlertDialog(
+            title: Text(rule.label),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(controller: controller, minLines: 3, maxLines: 8, decoration: const InputDecoration(hintText: '写点备注：身份、关系、伏笔……')),
+                  const SizedBox(height: 12),
+                  ColorPickerField(color: color, highlight: true, sample: rule.label.length > 8 ? rule.label.substring(0, 8) : rule.label, onChanged: (c) => setLocal(() => color = c)),
+                ],
+              ),
             ),
+            actions: [
+              if (rule.aid.isNotEmpty) TextButton(onPressed: () => Navigator.pop(context, 'remove'), child: const Text('取消高亮')),
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+              TextButton(onPressed: () => Navigator.pop(context, 'save'), child: const Text('保存')),
+            ],
           ),
-          actions: [
-            if (rule.aid.isNotEmpty) TextButton(onPressed: () => Navigator.pop(context, 'remove'), child: const Text('取消高亮')),
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-            TextButton(onPressed: () => Navigator.pop(context, 'save'), child: const Text('保存')),
-          ],
         ),
-      ),
-    );
-    if (result == null) return;
-    final rules = ReplaceRules.all();
-    if (result == 'remove') {
-      await ReplaceRules.save([for (final r in rules) if (r.id != rule.id) r]);
-      await RuleNotes.set(widget.aid, rule.id, '');
-    } else {
-      await RuleNotes.set(widget.aid, rule.id, controller.text);
-      if (color != rule.color) await ReplaceRules.save([for (final r in rules) r.id == rule.id ? r.copyWith(color: color) : r]);
+      );
+      if (result == null) return;
+      final rules = ReplaceRules.all();
+      if (result == 'remove') {
+        await ReplaceRules.save([for (final r in rules) if (r.id != rule.id) r]);
+        await RuleNotes.set(widget.aid, rule.id, '');
+      } else {
+        await RuleNotes.set(widget.aid, rule.id, controller.text);
+        if (color != rule.color) await ReplaceRules.save([for (final r in rules) r.id == rule.id ? r.copyWith(color: color) : r]);
+      }
+    } finally {
+      controller.dispose();
     }
-    ref.invalidate(chapterProvider);
-    if (mounted) setState(() {});
+    if (mounted) {
+      ref.invalidate(chapterProvider);
+      setState(() {});
+    }
   }
 
   @override
@@ -826,6 +845,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                 _shown = (_cid, _epoch);
                 final saved = ReadingProgress.of(widget.aid);
                 _offset = _initial ?? (saved?.cid == _cid ? saved!.offset : _offset);
+                _initial = null;
               }
               if (_recorded != _cid && novel != null) {
                 _recorded = _cid;
@@ -1155,7 +1175,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                                       ),
                                       onTap: () {
                                         Navigator.pop(context);
-                                        _go(b.cid, offset: b.offset == 0 ? 1 : b.offset);
+                                        _go(b.cid, offset: b.offset);
                                       },
                                     ),
                                 ],
@@ -1362,9 +1382,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                   XTile(
                     title: '更多阅读设置',
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
+                    onTap: () async {
                       Navigator.pop(context);
-                      this.context.push(Routes.settingsSection('reading'));
+                      _flushStats();
+                      if (!_speaking) _watch.stop();
+                      _syncVolumeKeys(false);
+                      await this.context.push(Routes.settingsSection('reading'));
+                      if (!mounted) return;
+                      if (!_background) _watch.start();
+                      _syncVolumeKeys(ref.read(readerPrefsProvider).volumeKeys);
                     },
                   ),
                 ],

@@ -439,17 +439,17 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
   void _snack(String t) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
 
   Future<void> _exportBackup() async {
-        try {
+    try {
       await SharePlus.instance.share(ShareParams(files: [XFile(await Backup.export())]));
     } catch (e) {
-      _snack('导出失败：$e');
+      if (mounted) _snack('导出失败：$e');
     }
   }
 
   Future<void> _importBackup() async {
     try {
       final picked = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: ['zip', 'json']);
-      if (picked == null) return;
+      if (picked == null || !mounted) return;
       if (picked.path!.endsWith('.zip')) {
         await _confirm('恢复备份', '本机的书架、进度、统计和设置都会换成备份里的内容，登录信息不变。恢复后 App 会关闭，请重新打开。', '恢复', () async {
           await Backup.importZip(picked.path!);
@@ -458,13 +458,14 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
         return;
       }
       final n = await Backup.restore(utf8.decode(await File(picked.path!).readAsBytes()));
+      if (!mounted) return;
       ref.invalidate(libraryProvider);
       ref.invalidate(readerPrefsProvider);
       ref.invalidate(swipePrefsProvider);
       ref.invalidate(appPrefsProvider);
       _snack('已恢复备份${n > 0 ? '，补回 $n 本书' : ''}。部分设置需重启 App 后生效');
     } catch (e) {
-      _snack('恢复失败：$e');
+      if (mounted) _snack('恢复失败：$e');
     }
   }
 
@@ -555,7 +556,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
           subtitle: '指纹、面容或锁屏密码',
           value: _prefs.get(P.lock, false),
           onChanged: (v) async {
-            if (v && !await authenticate('确认开启 Ark Novel 的锁')) {
+            if (!await authenticate(v ? '确认开启 Ark Novel 的锁' : '确认关闭 Ark Novel 的锁')) {
               if (mounted) _snack('验证未通过，或此设备未设置锁屏密码 / 生物识别');
               return;
             }

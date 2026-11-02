@@ -19,11 +19,11 @@ String _duration(int seconds) => seconds >= 3600 ? '${seconds ~/ 3600} 小时 ${
 /// 连续阅读天数：从今天往前数（今天还没读就从昨天开始数）
 int readingStreak(Map<String, int> perDay, DateTime now) {
   var d = DateTime(now.year, now.month, now.day);
-  if ((perDay[ReadingStats.dayKey(d)] ?? 0) == 0) d = d.subtract(const Duration(days: 1));
+  if ((perDay[ReadingStats.dayKey(d)] ?? 0) == 0) d = DateTime(d.year, d.month, d.day - 1);
   var n = 0;
   while ((perDay[ReadingStats.dayKey(d)] ?? 0) > 0) {
     n++;
-    d = d.subtract(const Duration(days: 1));
+    d = DateTime(d.year, d.month, d.day - 1);
   }
   return n;
 }
@@ -165,7 +165,8 @@ class _StatsPageState extends ConsumerState<StatsPage> {
     final speed = charsPerMinute([
       for (final aid in ReadingStats.chapterBooks())
         for (final e in ReadingStats.chapterSeconds(aid).entries)
-          if (ChapterCache.length(aid, e.key) case final n?) (n, e.value.values.fold(0, (a, b) => a + b)),
+          if (ReadState.isRead(aid, e.key))
+            if (ChapterCache.length(aid, e.key) case final n?) (n, e.value.values.fold(0, (a, b) => a + b)),
     ]);
 
     return Scaffold(
@@ -502,8 +503,8 @@ class _Heatmap extends StatelessWidget {
       builder: (context, c) {
         final weeks = ((c.maxWidth + _gap) / (_cell + _gap)).floor().clamp(4, 53);
         final today = DateTime(now.year, now.month, now.day);
-        final monday = today.subtract(Duration(days: today.weekday - 1));
-        final start = monday.subtract(Duration(days: 7 * (weeks - 1)));
+        final monday = DateTime(today.year, today.month, today.day - (today.weekday - 1));
+        final start = DateTime(monday.year, monday.month, monday.day - 7 * (weeks - 1));
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -516,7 +517,7 @@ class _Heatmap extends StatelessWidget {
                       children: [
                         for (var d = 0; d < 7; d++)
                           () {
-                            final day = start.add(Duration(days: w * 7 + d));
+                            final day = DateTime(start.year, start.month, start.day + w * 7 + d);
                             return Padding(
                               padding: EdgeInsets.only(bottom: d < 6 ? _gap : 0),
                               child: Container(

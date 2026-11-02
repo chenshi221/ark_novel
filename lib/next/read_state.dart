@@ -54,5 +54,8 @@ class ReadState {
   /// 书的评分（1 到 5 星），没评过为 0。
   static int rating(String aid) => (_box.get('rating:$aid') as int?) ?? 0;
 
-  static Future<void> setRating(String aid, int stars) => _box.put('rating:$aid', stars);
+  static Future<void> setRating(String aid, int stars) async {
+    await _box.put('rating:$aid', stars);
+    Volumes.changes.value++;
+  }
 }

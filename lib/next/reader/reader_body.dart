@@ -349,10 +349,17 @@ class _ScrollBodyState extends State<ScrollBody> {
     final max = _controller.position.maxScrollExtent;
     final off = widget.startOffset;
     final ro = _textKey.currentContext?.findRenderObject();
-    if (off >= kToEnd) return _controller.jumpTo(max);
-    if (off <= 0 || ro is! RenderParagraph) return;
-    final caret = ro.getOffsetForCaret(TextPosition(offset: math.min(off, widget.chapter.text.length)), Rect.zero);
-    _controller.jumpTo((_padTop + caret.dy).clamp(0.0, max));
+    if (off >= kToEnd) {
+      _controller.jumpTo(max);
+      widget.onOffset(_charAtTop());
+      widget.onEnd();
+      return;
+    }
+    if (off > 0 && ro is RenderParagraph) {
+      final caret = ro.getOffsetForCaret(TextPosition(offset: math.min(off, widget.chapter.text.length)), Rect.zero);
+      _controller.jumpTo((_padTop + caret.dy).clamp(0.0, max));
+    }
+    if (max <= 0 || _controller.position.pixels >= max - 40) widget.onEnd();
   }
 
   int _charAtTop() {
@@ -837,7 +844,10 @@ class _PagedBodyState extends State<PagedBody> {
           _publish();
           _imgBox = Size(box.maxWidth / cols, box.maxHeight);
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _prefetch();
+            if (!mounted) return;
+            if (_cur != widget.startOffset) widget.onOffset(_cur);
+            if (_page >= _units - 1) widget.onEnd();
+            _prefetch();
           });
         }
         final Widget pages;

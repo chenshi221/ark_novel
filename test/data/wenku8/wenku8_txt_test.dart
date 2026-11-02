@@ -45,8 +45,16 @@ void main() {
   });
 
   test('GBK 解码并解开实体', () {
-    final bytes = Uint8List.fromList(const GbkCodec().encode('安兹&#8231;乌尔&#10084;'));
-    expect(Wenku8Txt.decode(bytes), '安兹‧乌尔❤');
+    final bytes = Uint8List.fromList(const GbkCodec().encode('安兹&#8231;乌尔&#10084;&#X2764;&#99999999;'));
+    expect(Wenku8Txt.decode(bytes), '安兹‧乌尔❤❤&#99999999;');
     expect(Wenku8Txt.fullBookUrl('1592', node: 2), 'https://dl.wenku8.com/down.php?type=txt&node=2&id=1592');
+  });
+
+  test('同卷内同名章节按出现顺序依次对应各自的 cid', () {
+    final cat = [
+      vol('第一卷', {'101': '幕间', '102': '第一章', '103': '幕间'}),
+    ];
+    final t = Wenku8Txt.byCatalogue('第一卷 幕间\n    第一段幕间\n第一卷 第一章\n    正文\n第一卷 幕间\n    第二段幕间\n', cat);
+    expect(t, {'101': '第一段幕间', '102': '正文', '103': '第二段幕间'});
   });
 }

@@ -93,7 +93,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           key: state.pageKey,
           transitionDuration: const Duration(milliseconds: 450),
           reverseTransitionDuration: const Duration(milliseconds: 380),
-          transitionsBuilder: (_, animation, _, child) => FadeTransition(opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut), child: child),
+          transitionsBuilder: (_, animation, _, child) => FadeTransition(opacity: CurveTween(curve: Curves.easeOut).animate(animation), child: child),
           child: VolumesPage(aid: state.pathParameters['aid']!),
         ),
       ),

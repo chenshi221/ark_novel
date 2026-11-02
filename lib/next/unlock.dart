@@ -10,6 +10,7 @@ import '../models/content.dart';
 import 'app_prefs.dart';
 import 'cache.dart';
 import 'history.dart';
+import 'incognito.dart';
 import 'library.dart';
 import 'session.dart';
 import 'txt_download.dart';
@@ -82,12 +83,13 @@ class UnlockService {
     final texts = Wenku8Txt.byCatalogue(txt, cat);
     if (texts.isEmpty) throw const ChapterLockedException('全本 TXT 和网站目录对不上，取不到正文。');
     for (final MapEntry(key: cid, value: text) in texts.entries) {
+      final ticket = ChapterCache.ticket(aid, cid);
       final old = await ChapterCache.get(aid, cid);
-      if (old == null || isLockedContent(old)) await ChapterCache.put(aid, cid, Content(text: text, images: const []));
+      if (old == null || isLockedContent(old)) await ChapterCache.put(aid, cid, Content(text: text, images: const []), ticket: ticket);
     }
     final all = [for (final v in cat) ...v.chapters];
-    // 记成离线缓存：启动时的自动清理不会删，「离线缓存」里能看到、能删
-    if (!ChapterCache.offline(aid) && all.isNotEmpty) {
+    // 记成离线缓存：启动时的自动清理不会删，「离线缓存」里能看到、能删（无痕阅读时不记进离线缓存列表）
+    if (!Incognito.on && !ChapterCache.offline(aid) && all.isNotEmpty) {
       final book = LibraryStore.get(aid);
       final seen = ReadingHistory.all().where((e) => e.aid == aid).firstOrNull; // 不在书架上就用阅读历史里的书名、封面
       final title = (book?['title'] as String?) ?? seen?.title ?? RegExp(r'^<([^<>\n]+)>$', multiLine: true).firstMatch(txt)?[1] ?? aid;
@@ -103,6 +105,7 @@ final appApiProvider = Provider<Wenku8AppApi>((ref) {
   ref.watch(proxyProvider);
   final dio = Dio(BaseOptions(responseType: ResponseType.bytes, connectTimeout: const Duration(seconds: 12), receiveTimeout: const Duration(seconds: 30)))
     ..httpClientAdapter = store.adapter();
+  ref.onDispose(dio.close);
   return Wenku8AppApi(dio: dio);
 });
 
