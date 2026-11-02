@@ -127,3 +127,8 @@ flutter_launcher_icons:
   adaptive_icon_monochrome: "tool/icon/logo_monochrome.png"
   adaptive_icon_foreground_inset: 0  # 前景 SVG 本身已按自适应图标安全区留好边距
   min_sdk_android: 21
+  macos:
+    generate: true
+  windows:
+    generate: true
+    icon_size: 256

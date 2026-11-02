@@ -1,3 +1,5 @@
+import 'dart:ui' show PlatformDispatcher;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -31,9 +33,14 @@ class PaletteController extends Notifier<int> {
 
 final paletteProvider = NotifierProvider<PaletteController, int>(PaletteController.new);
 
-/// 屏幕方向：0 锁竖屏（默认）1 自动旋转 2 锁横屏，记在本地。
+/// 屏幕方向：0 锁竖屏（手机默认）1 自动旋转（平板默认）2 锁横屏，记在本地。
 class OrientationController extends Notifier<int> {
-  static int get saved => (_box.get('orientation') as int?) ?? 0;
+  static int get saved => (_box.get('orientation') as int?) ?? _defaultValue;
+
+  static int get _defaultValue {
+    final view = PlatformDispatcher.instance.views.first;
+    return view.physicalSize.shortestSide / view.devicePixelRatio >= 600 ? 1 : 0;
+  }
 
   @override
   int build() => saved;
