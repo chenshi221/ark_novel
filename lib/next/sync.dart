@@ -23,7 +23,7 @@ class Sync {
 
   static Box get _box => Hive.box('session');
 
-  static const _secure = FlutterSecureStorage();
+  static const _secure = FlutterSecureStorage(mOptions: MacOsOptions(usesDataProtectionKeychain: false)); // 没开发者签名的 Mac 版用不了新式钥匙串（-34018）
 
   static String get url => (_box.get('sync:url') as String?) ?? 'https://dav.jianguoyun.com/dav/';
   static String get user => (_box.get('sync:user') as String?) ?? '';

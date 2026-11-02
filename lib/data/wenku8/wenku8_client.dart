@@ -17,7 +17,7 @@ import 'wenku8_exceptions.dart';
 /// 只负责"发请求 + 处理编码/重定向/Cloudflare + 管理 cookie"，不依赖 GetX 或本地存储：
 /// 节点地址和编码通过构造参数里的函数按需读取，方便测试和以后替换状态管理。
 class Wenku8Client {
-  Wenku8Client({required this.baseUrl, required this.charset, required Map<String, String> headers, Dio? dio, CookieJar? cookieJar, this.challengeFallback})
+  Wenku8Client({required this.baseUrl, required this.charset, required Map<String, String> headers, Dio? dio, CookieJar? cookieJar, this.challengeFallback, Duration rateLimitPause = const Duration(seconds: 10)})
     : _cookieJar = cookieJar ?? CookieJar() {
     this.dio = (dio ?? Dio())
       ..options = BaseOptions(
@@ -29,7 +29,7 @@ class Wenku8Client {
         sendTimeout: const Duration(seconds: 20),
         receiveTimeout: const Duration(seconds: 25),
       )
-      ..interceptors.add(_ThrottleInterceptor())
+      ..interceptors.add(_ThrottleInterceptor(rateLimitPause))
       ..interceptors.add(_CloudflareInterceptor());
     // 浏览器自己管理 cookie，CookieManager 在网页环境会断言失败（网页预览的 cookie 由转发程序保存）
     if (!kIsWeb) this.dio.interceptors.add(CookieManager(_cookieJar));
@@ -75,8 +75,7 @@ class Wenku8Client {
     final target = charsetParam || currentCharset != CharsetType.gbk ? Wenku8Charset.withCharsetParam(url, currentCharset) : url;
     final Uint8List bytes;
     try {
-      final response = await dio.get(target, options: referer == null ? null : Options(headers: {'Referer': referer}));
-      bytes = await _followRedirect(response);
+      bytes = await _getRetrying(target, referer);
     } on DioException catch (e) {
       // 书架这类页面不出验证，直接 403 拒绝不像浏览器的请求，也交给网页再试
       if (e is! CloudflareChallengeException && e is! Cloudflare403Exception) rethrow;
@@ -85,6 +84,18 @@ class Wenku8Client {
       return fallback(target, referer: referer);
     }
     return Wenku8Charset.decode(bytes, currentCharset);
+  }
+
+  /// 读页面没有副作用，被限流（429）就排队再试：限流拦截器会先等暂停结束。试 3 次还不行才算失败。
+  Future<Uint8List> _getRetrying(String target, String? referer) async {
+    for (var tries = 1; ; tries++) {
+      try {
+        final response = await dio.get(target, options: referer == null ? null : Options(headers: {'Referer': referer}));
+        return await _followRedirect(response);
+      } on Wenku8HttpException catch (e) {
+        if (e.status != 429 || tries >= 3) rethrow;
+      }
+    }
   }
 
   /// 以 `application/x-www-form-urlencoded` 提交表单，返回解码后的页面。
@@ -142,61 +153,64 @@ class _CloudflareInterceptor extends Interceptor {
   }
 }
 
-/// 全局限流：同时最多 4 个请求在途，相邻请求至少间隔 120 毫秒，避免触发 Cloudflare 的速率限制。
-class _ThrottleInterceptor extends Interceptor {
-  static const _maxActive = 4;
-  static const _gap = Duration(milliseconds: 120);
+const _backgroundKey = #wenku8Background;
 
-  int _active = 0;
-  DateTime _nextAllowed = DateTime.fromMillisecondsSinceEpoch(0);
-  final _waiters = Queue<Completer<void>>();
+/// [body] 里发的请求算后台任务（检查更新、取详情、取封面）：排在用户正在等的请求后面，发得也更慢。
+T runInBackground<T>(T Function() body) => runZoned(body, zoneValues: {_backgroundKey: true});
+
+/// 所有页面请求排一条队，一次只发一个，保证不触发网站的速率限制。前台可以插队。
+/// 任何请求收到 429，所有请求一起暂停 [_pause]。
+class _ThrottleInterceptor extends Interceptor {
+  _ThrottleInterceptor(this._pause);
+
+  static const _foregroundGap = Duration(milliseconds: 300);
+  static const _backgroundGap = Duration(seconds: 1);
+
+  final Duration _pause;
+  final _foreground = Queue<Completer<void>>();
+  final _background = Queue<Completer<void>>();
+  bool _busy = false;
+  DateTime _last = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _pausedUntil = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   Future<void> onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
-    if (_active >= _maxActive) {
-      final c = Completer<void>();
-      _waiters.add(c);
-      try {
-        await c.future;
-      } catch (_) {
-        _waiters.remove(c);
-        rethrow;
-      }
-    } else {
-      _active++;
-    }
+    final turn = Completer<void>();
+    (Zone.current[_backgroundKey] == true ? _background : _foreground).add(turn);
+    unawaited(_dispatch());
+    await turn.future;
     options.extra['throttled'] = true;
+    handler.next(options);
+  }
 
-    try {
-      final now = DateTime.now();
-      final scheduled = _nextAllowed.isAfter(now) ? _nextAllowed : now;
-      _nextAllowed = scheduled.add(_gap);
-      final wait = scheduled.difference(now);
-      if (!wait.isNegative && wait > Duration.zero) {
-        await Future<void>.delayed(wait);
+  /// 等到能发了放行一个；它的响应回来（[_release]）才放下一个。
+  Future<void> _dispatch() async {
+    if (_busy) return;
+    _busy = true;
+    while (true) {
+      if (_foreground.isEmpty && _background.isEmpty) {
+        _busy = false;
+        return;
       }
-      handler.next(options);
-    } catch (e) {
-      _release(options);
-      if (e is DioException) {
-        handler.reject(e);
-      } else {
-        rethrow;
-      }
+      // 等的时候可能来了前台请求或新的 429，每次醒来重新算
+      final next = _last.add(_foreground.isNotEmpty ? _foregroundGap : _backgroundGap);
+      final wait = (next.isAfter(_pausedUntil) ? next : _pausedUntil).difference(DateTime.now());
+      if (wait <= Duration.zero) break;
+      await Future<void>.delayed(wait);
     }
+    _last = DateTime.now();
+    (_foreground.isNotEmpty ? _foreground : _background).removeFirst().complete();
   }
 
   void _release(RequestOptions options) {
     if (options.extra.remove('throttled') != true) return;
-    if (_waiters.isNotEmpty) {
-      _waiters.removeFirst().complete();
-    } else {
-      _active--;
-    }
+    _busy = false;
+    unawaited(_dispatch());
   }
 
   @override
   void onResponse(Response<dynamic> response, ResponseInterceptorHandler handler) {
+    if (response.statusCode == 429) _pausedUntil = DateTime.now().add(_pause);
     _release(response.requestOptions);
     handler.next(response);
   }

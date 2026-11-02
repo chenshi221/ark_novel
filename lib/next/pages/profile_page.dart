@@ -107,13 +107,22 @@ class ProfilePage extends ConsumerWidget {
 
     final name = user?.username ?? '未登录';
     final sub = user == null ? '点击登录' : (session is SessionLoggedIn && session.offline ? 'UID ${user.uid} · 离线' : 'UID ${user.uid}');
+    final useCustom = custom != null && !isWebPreview;
+    final initial = Text(name.characters.firstOrNull ?? '?', style: theme.textTheme.titleLarge);
     final avatar = CircleAvatar(
       radius: 28,
       backgroundColor: scheme.surfaceContainer,
-      foregroundImage: custom != null && !isWebPreview
-          ? FileImage(File(custom))
-          : (user == null || user.avatar.isEmpty ? null : NetworkImage(displayImageUrl(user.avatar.replaceFirst('http://', 'https://')))),
-      child: Text(name.characters.firstOrNull ?? '?', style: theme.textTheme.titleLarge),
+      foregroundImage: useCustom ? FileImage(File(custom)) : null,
+      // 网站头像走 App 的图片通道（Flutter 自带的 NetworkImage 会被 Cloudflare 403）；取不到时露出下面的首字
+      child: useCustom || user == null || user.avatar.isEmpty
+          ? initial
+          : Stack(
+              fit: StackFit.expand,
+              children: [
+                Center(child: initial),
+                ClipOval(child: NetImage(user.avatar.replaceFirst('http://', 'https://'))),
+              ],
+            ),
     );
 
     final tappableAvatar = isWebPreview || user == null ? avatar : GestureDetector(onTap: () => _avatarMenu(context, ref), child: avatar);

@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../common/constants.dart';
 import '../data/wenku8/wenku8_client.dart';
@@ -28,10 +30,15 @@ class SessionStore {
   SessionStore._(this._box);
 
   final Box _box;
-  static const _secure = FlutterSecureStorage();
+  static const _secure = FlutterSecureStorage(mOptions: MacOsOptions(usesDataProtectionKeychain: false)); // 没开发者签名的 Mac 版用不了新式钥匙串（-34018）
 
   static Future<SessionStore> open() async {
-    await Hive.initFlutter('next');
+    if (!kIsWeb && Platform.isWindows) {
+      // Windows 默认会放进「文档」文件夹，改放 App 自己的数据目录
+      Hive.init((await Directory(p.join((await getApplicationSupportDirectory()).path, 'next')).create(recursive: true)).path);
+    } else {
+      await Hive.initFlutter('next');
+    }
     if (!kIsWeb) await Backup.applyPending();
     return SessionStore._(await Hive.openBox('session'));
   }

@@ -4,7 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import '../data/wenku8/wenku8_client.dart';
 import '../models/cat_volume.dart';
+import '../models/content.dart';
 import 'cache.dart';
 import 'cover_trim.dart';
 import 'app_prefs.dart';
@@ -196,12 +198,12 @@ class VolumeCoverQueue {
   final _bgmFailed = <String>{}; // 连不上 Bangumi、图下不下来的书，这次运行不再试
 
   /// 后台把这些书在书架上显示的封面（第一卷的）取下来（打开 App、同步完书架后调用）。其他卷不常看，打开卷册页时再取。
-  void prefetchAll(Iterable<String> aids) {
+  Future<void> prefetchAll(Iterable<String> aids) {
     for (final aid in aids) {
       final v = Volumes.of(aid).firstOrNull;
       if (v != null && Volumes.cover(aid, v.title) == null && !_bg.contains((aid, v.title))) _bg.add((aid, v.title));
     }
-    Future.microtask(_pump);
+    return Future.microtask(_pump);
   }
 
   /// 没加入书架的书退出详情页时：不再取它的封面，删掉挑封面时下载的图（插图章节的前几张）和封面记录，下次打开再取。
@@ -259,7 +261,7 @@ class VolumeCoverQueue {
         var content = await ChapterCache.get(aid, v.illus!);
         if (content == null) {
           try {
-            content = await _ref.read(apiProvider).chapter(aid, v.illus!);
+            content = await runInBackground<Future<Content>>(() => _ref.read(apiProvider).chapter(aid, v.illus!));
           } on ChapterLockedException {
             // 受限书：哪一卷的插图都取不到，不用一卷一卷去试；没取过的都记成没插图，再一次按卷号从 Bangumi 补上
             await Volumes.setCovers(aid, {for (final x in Volumes.of(aid)) if (Volumes.cover(aid, x.title) == null) x.title: ''});

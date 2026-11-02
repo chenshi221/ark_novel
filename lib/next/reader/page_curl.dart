@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 
 /// 外部（点击翻页、朗读等）驱动翻页用。
@@ -265,6 +266,7 @@ class _PageCurlState extends State<PageCurl> with SingleTickerProviderStateMixin
         }
         return GestureDetector(
           behavior: HitTestBehavior.translucent,
+          supportedDevices: const {PointerDeviceKind.touch, PointerDeviceKind.trackpad, PointerDeviceKind.stylus, PointerDeviceKind.invertedStylus}, // 鼠标拖动留给选字
           onHorizontalDragStart: _onDragStart,
           onHorizontalDragUpdate: _onDragUpdate,
           onHorizontalDragEnd: _onDragEnd,
