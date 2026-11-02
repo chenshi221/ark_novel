@@ -21,7 +21,7 @@ final themeModeProvider = NotifierProvider<ThemeModeController, ThemeMode>(Theme
 /// 配色方案编号（theme.dart 的 appPalettes）。
 class PaletteController extends Notifier<int> {
   @override
-  int build() => (_box.get('palette') as int?) ?? 0;
+  int build() => (_box.get('palette') as int?) ?? 7;
 
   void set(int index) {
     _box.put('palette', index);
@@ -56,7 +56,7 @@ void applyOrientation(int v) => SystemChrome.setPreferredOrientations(switch (v)
 
 /// 阅读器的外观和翻页方式。
 class ReaderPrefs {
-  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5, this.margin = 22, this.font = 0, this.ttsPitch = 1.0, this.ttsVoice = '', this.ttsHighlight = true, this.ttsAutoNext = true, this.dual = true, this.dim = 0, this.volumeKeys = true, this.tapZone = 0, this.tapInvert = 0, this.keepScreenOn = true, this.fullscreen = true, this.showStatus = true, this.skipRead = false, this.chapterToast = false, this.warm = 0, this.grayscale = false, this.invert = false, this.customBrightness = false, this.brightness = 0.5, this.volumeInvert = false, this.pageAnim = true, this.prefetch = 2, this.prefetchWifi = false});
+  const ReaderPrefs({this.fontSize = 18, this.lineHeight = 1.8, this.theme = 5, this.mode = 3, this.ttsRate = 1.0, this.margin = 22, this.font = 1, this.ttsPitch = 1.0, this.ttsVoice = '', this.ttsHighlight = true, this.ttsAutoNext = true, this.dual = true, this.dim = 0, this.volumeKeys = true, this.tapZone = 2, this.tapInvert = 0, this.keepScreenOn = true, this.fullscreen = true, this.showStatus = true, this.skipRead = false, this.chapterToast = false, this.warm = 0, this.grayscale = false, this.invert = false, this.customBrightness = false, this.brightness = 0.5, this.volumeInvert = false, this.pageAnim = true, this.prefetch = 2, this.prefetchWifi = false});
 
   final double fontSize;
   final double lineHeight;
@@ -174,13 +174,13 @@ class ReaderPrefs {
 class ReaderPrefsController extends Notifier<ReaderPrefs> {
   @override
   ReaderPrefs build() => ReaderPrefs(
-    fontSize: (_box.get('r.fontSize') as num?)?.toDouble() ?? 19,
+    fontSize: (_box.get('r.fontSize') as num?)?.toDouble() ?? 18,
     lineHeight: (_box.get('r.lineHeight') as num?)?.toDouble() ?? 1.8,
-    theme: (_box.get('r.theme') as int?) ?? 0,
-    mode: (_box.get('r.mode') as int?) ?? 0,
-    ttsRate: (_box.get('r.ttsRate') as num?)?.toDouble() ?? 0.5,
+    theme: (_box.get('r.theme') as int?) ?? 5,
+    mode: (_box.get('r.mode') as int?) ?? 3,
+    ttsRate: (_box.get('r.ttsRate') as num?)?.toDouble() ?? 1.0,
     margin: (_box.get('r.margin') as num?)?.toDouble() ?? 22,
-    font: (_box.get('r.font') as int?) ?? 0,
+    font: (_box.get('r.font') as int?) ?? 1,
     ttsPitch: (_box.get('r.ttsPitch') as num?)?.toDouble() ?? 1.0,
     ttsVoice: (_box.get('r.ttsVoice') as String?) ?? '',
     ttsHighlight: (_box.get('r.ttsHighlight') as bool?) ?? true,
@@ -188,7 +188,7 @@ class ReaderPrefsController extends Notifier<ReaderPrefs> {
     dual: (_box.get('r.dual') as bool?) ?? true,
     dim: (_box.get('r.dim') as num?)?.toDouble() ?? 0,
     volumeKeys: (_box.get('r.volumeKeys') as bool?) ?? true,
-    tapZone: (_box.get('r.tapZone') as int?) ?? 0,
+    tapZone: (_box.get('r.tapZone') as int?) ?? 2,
     tapInvert: (_box.get('r.tapInvert') as int?) ?? 0,
     keepScreenOn: (_box.get('r.keepScreenOn') as bool?) ?? true,
     fullscreen: (_box.get('r.fullscreen') as bool?) ?? true,

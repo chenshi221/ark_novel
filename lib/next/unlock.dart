@@ -41,7 +41,7 @@ class UnlockService {
   /// 同一本书同时要好几章（预加载、缓存全本）时只下载、导入一次
   final _importing = <String, Future<void>>{};
 
-  bool get enabled => AppPrefs.read(P.unlock, false);
+  bool get enabled => AppPrefs.read(P.unlock, true);
 
   bool get _apiEnabled => AppPrefs.read(P.unlockApi, true);
 

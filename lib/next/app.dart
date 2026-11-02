@@ -17,7 +17,7 @@ class NextApp extends ConsumerWidget {
       title: 'Ark Novel',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(Brightness.light, appPalettes[ref.watch(paletteProvider)]),
-      darkTheme: buildAppTheme(Brightness.dark, appPalettes[ref.watch(paletteProvider)], AppPrefs.read(P.pureBlack, false)),
+      darkTheme: buildAppTheme(Brightness.dark, appPalettes[ref.watch(paletteProvider)], AppPrefs.read(P.pureBlack, true)),
       themeMode: ref.watch(themeModeProvider),
       routerConfig: ref.watch(routerProvider),
       builder: (context, child) => AppGuard(child: child ?? const SizedBox.shrink()),

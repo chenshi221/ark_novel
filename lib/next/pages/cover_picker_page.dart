@@ -205,7 +205,7 @@ class _CropPageState extends ConsumerState<_CropPage> {
     return (bytes, await imageSize(bytes), await CoverPixels.decode(bytes));
   }();
   Size? _laidOut; // 按哪个框的大小摆过初始位置
-  bool _trimOn = AppPrefs.read(P.coverTrim, true);
+  bool _trimOn = AppPrefs.read(P.coverTrim, false);
   bool _srOn = false; // 提升清晰度（Real-ESRGAN 放大），选了的封面地址带 #sr
   Rect? _inner; // 去掉白边后留下的那块（框里的坐标），没有白边或正在拖时为 null
   (CoverPixels, ui.Size, Size)? _geom; // 现在的图和框

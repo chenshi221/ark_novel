@@ -345,7 +345,7 @@ class VolumeCoverQueue {
     final box = Hive.box('session');
     if (box.get('coverRetrimmed') == true) return;
     final store = _ref.read(imageStoreProvider);
-    final manualOn = AppPrefs.read(P.coverTrim, true);
+    final manualOn = AppPrefs.read(P.coverTrim, false);
     for (final aid in aids) {
       for (final MapEntry(key: title, value: saved) in Volumes._covers(aid).entries) {
         final manual = saved.contains('#crop=');

@@ -17,6 +17,7 @@ import '../models/common/charset_type.dart';
 import '../models/common/wenku8_node.dart';
 import '../models/custom_exception.dart';
 import '../models/user_info.dart';
+import 'backup.dart';
 import 'cache.dart';
 import 'env.dart';
 import 'net_stub.dart' if (dart.library.io) 'net_io.dart';
@@ -30,6 +31,7 @@ class SessionStore {
 
   static Future<SessionStore> open() async {
     await Hive.initFlutter('next');
+    if (!kIsWeb) await Backup.applyPending();
     return SessionStore._(await Hive.openBox('session'));
   }
 
@@ -66,7 +68,7 @@ class SessionStore {
 
   Future<void> setUserAgent(String ua) => _box.put('ua', ua);
 
-  Wenku8Node get node => Wenku8Node.values[(_box.get('node') as int?) ?? Wenku8Node.wwwWenku8Net.index];
+  Wenku8Node get node => Wenku8Node.values[(_box.get('node') as int?) ?? Wenku8Node.wwwWenku8Cc.index];
 
   /// 最近一次成功取到的用户页 HTML，断网时用它显示登录状态。
   String? get userHtml => _box.get('userHtml') as String?;
@@ -81,7 +83,7 @@ class SessionStore {
   Future<void> setProxy(String value) => _box.put('proxy', value.trim());
 
   /// 登录有效期（秒）。wenku8 不接受"临时登录"。
-  int get keepSeconds => (_box.get('keepSeconds') as int?) ?? 2592000;
+  int get keepSeconds => (_box.get('keepSeconds') as int?) ?? 315360000;
 
   Future<void> setKeepSeconds(int value) => _box.put('keepSeconds', value);
 
