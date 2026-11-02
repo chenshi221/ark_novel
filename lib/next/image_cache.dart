@@ -162,7 +162,7 @@ class ImageStore {
 
   static bool get srSupported => !kIsWeb && Platform.isAndroid;
 
-  static bool get _srAuto => AppPrefs.read(P.coverSr, 0) == 0;
+  static bool get _srAuto => AppPrefs.read(P.coverSr, 1) == 0;
 
   static const _upscale = MethodChannel('ark/upscale');
 

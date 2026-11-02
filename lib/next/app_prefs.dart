@@ -18,7 +18,7 @@ class AppPrefs extends Notifier<int> {
   static Future<void> write(String key, Object? value) => _box.put('p.$key', value);
 
   /// 「书籍解锁」入口是否已显示：默认隐藏，在「关于」里连点版本号 7 次后出现（和安卓开发者模式一样）。
-  static bool get unlockEntry => read(P.unlockShown, false);
+  static bool get unlockEntry => read(P.unlockShown, true);
 
   @override
   int build() => 0;

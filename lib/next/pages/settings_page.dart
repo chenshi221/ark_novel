@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../models/common/wenku8_node.dart';
@@ -259,7 +258,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
     return [
       const XGroupTitle('主题'),
       XSegments<ThemeMode>(value: mode, options: const {ThemeMode.system: '跟随系统', ThemeMode.light: '浅色', ThemeMode.dark: '深色'}, onChanged: (v) => ref.read(themeModeProvider.notifier).set(v)),
-      _switch('纯黑深色', P.pureBlack, false, subtitle: '适合 OLED 屏幕'),
+      _switch('纯黑深色', P.pureBlack, true, subtitle: '适合 OLED 屏幕'),
       const XDivider(),
       const XGroupTitle('配色'),
       // 一排色点：点一下换，选中的外面一圈
@@ -370,8 +369,8 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       if (ImageStore.srSupported)
         XChoice<int>(
           title: '提升清晰度',
-          subtitle: _prefs.get(P.coverSr, 0) == 0 ? '小于 600 像素的图自动放大' : '框封面时自己选',
-          value: _prefs.get(P.coverSr, 0),
+          subtitle: _prefs.get(P.coverSr, 1) == 0 ? '小于 600 像素的图自动放大' : '框封面时自己选',
+          value: _prefs.get(P.coverSr, 1),
           options: const {0: '自动', 1: '手动'},
           onChanged: (v) {
             _prefs.set(P.coverSr, v);
@@ -440,15 +439,24 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
   void _snack(String t) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
 
   Future<void> _exportBackup() async {
-    final file = File('${(await getTemporaryDirectory()).path}/ark_novel_backup.json');
-    await file.writeAsString(Backup.make());
-    await SharePlus.instance.share(ShareParams(files: [XFile(file.path)]));
+        try {
+      await SharePlus.instance.share(ShareParams(files: [XFile(await Backup.export())]));
+    } catch (e) {
+      _snack('导出失败：$e');
+    }
   }
 
   Future<void> _importBackup() async {
     try {
-      final picked = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: ['json']);
+      final picked = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: ['zip', 'json']);
       if (picked == null) return;
+      if (picked.path!.endsWith('.zip')) {
+        await _confirm('恢复备份', '本机的书架、进度、统计和设置都会换成备份里的内容，登录信息不变。恢复后 App 会关闭，请重新打开。', '恢复', () async {
+          await Backup.importZip(picked.path!);
+          exit(0);
+        });
+        return;
+      }
       final n = await Backup.restore(utf8.decode(await File(picked.path!).readAsBytes()));
       ref.invalidate(libraryProvider);
       ref.invalidate(readerPrefsProvider);
@@ -486,7 +494,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       const XDivider(),
       const XGroupTitle('备份与恢复'),
       XTile(title: '导出完整备份', onTap: _exportBackup),
-      XTile(title: '导入备份', subtitle: '合并到本机，不覆盖', onTap: _importBackup),
+      XTile(title: '导入备份', onTap: _importBackup),
       const XDivider(),
       const XGroupTitle('多设备'),
       _link('同步', '通过 WebDAV（如坚果云）在多台设备间同步阅读进度、书签和统计', () => context.push(Routes.sync)),
@@ -507,7 +515,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
   }
 
   List<Widget> _unlock() {
-    final on = _prefs.get(P.unlock, false);
+    final on = _prefs.get(P.unlock, true);
     return [
       XSwitch(
         title: '启用书籍解锁',

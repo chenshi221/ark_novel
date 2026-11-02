@@ -28,6 +28,7 @@ dependencies:
 
   # 存储
   path: ^1.9.1
+  archive: ^4.0.0
   path_provider: ^2.1.5
   hive_ce: ^2.11.1
   hive_ce_flutter: ^2.3.0
