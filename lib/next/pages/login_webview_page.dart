@@ -123,10 +123,13 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
 
   static String _js(String s) => "'${s.replaceAll(r'\', r'\\').replaceAll("'", r"\'").replaceAll('\n', r'\n').replaceAll('\r', '')}'";
 
+  /// 站点可能跳到 http 页面（例如 http 的 login.php，会被系统拦成报错页），按 http 地址取不到 Secure 的 `cf_clearance`，统一按 https 取
+  Future<List<Cookie>> _cookiesOf(WebUri uri) => _cookieManager.getCookies(url: uri.scheme == 'http' ? WebUri.uri(uri.replace(scheme: 'https')) : uri);
+
   Future<void> _finish(InAppWebViewController c, WebUri uri) async {
     if (_done) return;
     _done = true;
-    final cookies = await _cookieManager.getCookies(url: uri);
+    final cookies = await _cookiesOf(uri);
     final result = WebSessionResult(cookies.map((e) => '${e.name}=${e.value}').join(';'), _ua);
     if (widget.onDone != null) {
       await widget.onDone!(result);
@@ -143,7 +146,7 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
       return;
     }
     _ua ??= (await c.evaluateJavascript(source: 'navigator.userAgent')) as String?;
-    final names = (await _cookieManager.getCookies(url: uri)).map((e) => e.name).toSet();
+    final names = (await _cookiesOf(uri)).map((e) => e.name).toSet();
     if (mounted) setState(() => _status = '${uri.host}${uri.path}  登录cookie：${names.any((n) => n.startsWith('jieqiUserInfo')) ? '有' : '无'}  已填表：${_submitted ? '是' : '否'}');
     if (widget.isLogin) {
       if (names.any((n) => n.startsWith('jieqiUserInfo'))) return _finish(c, uri);
@@ -164,7 +167,7 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
     final c = _controller;
     if (c == null) return;
     final url = await c.getUrl();
-    final names = url == null ? <String>[] : (await _cookieManager.getCookies(url: url)).map((e) => e.name).toList();
+    final names = url == null ? <String>[] : (await _cookiesOf(url)).map((e) => e.name).toList();
     final forms = await c.evaluateJavascript(source: "JSON.stringify([...document.forms].map(f => ({action: f.getAttribute('action'), fields: [...f.elements].map(e => e.name + ':' + e.type)})))");
     final info = '地址：$url\ncookie 名：${names.join(',')}\nUA：$_ua\n表单：$forms\n状态：$_status\n最近记录：\n${_events.join('\n')}';
     await Clipboard.setData(ClipboardData(text: info));

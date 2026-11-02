@@ -86,6 +86,47 @@ void main() {
     await expectLater(_client(adapter).getPage('https://www.wenku8.net/x.php'), throwsA(isA<Cloudflare403Exception>()));
   });
 
+  test('带 cf-mitigated: challenge 的 403 识别为需要验证', () async {
+    final adapter = _FakeAdapter({
+      '/x.php': () => ResponseBody.fromBytes(const [], 403, headers: {
+            'cf-mitigated': ['challenge'],
+          }),
+    });
+    await expectLater(_client(adapter).getPage('https://www.wenku8.net/x.php'), throwsA(isA<CloudflareChallengeException>()));
+  });
+
+  test('被验证拦下时改用备用方式取页面，带上原地址和来源页', () async {
+    final adapter = _FakeAdapter({
+      '/x.php': () => ResponseBody.fromBytes(const [], 403, headers: {
+            'cf-mitigated': ['challenge'],
+          }),
+    });
+    final calls = <String>[];
+    final client = Wenku8Client(
+      baseUrl: () => 'https://www.wenku8.net',
+      charset: () => CharsetType.gbk,
+      headers: const {},
+      dio: Dio()..httpClientAdapter = adapter,
+      challengeFallback: (url, {referer}) async {
+        calls.add('$url|$referer');
+        return '<html>ok</html>';
+      },
+    );
+    expect(await client.getPage('https://www.wenku8.net/x.php?id=1', charsetParam: false, referer: 'https://www.wenku8.net/r'), '<html>ok</html>');
+    expect(calls, ['https://www.wenku8.net/x.php?id=1|https://www.wenku8.net/r']);
+  });
+
+  test('直接 403 拒绝时也改用备用方式取页面', () async {
+    final client = Wenku8Client(
+      baseUrl: () => 'https://www.wenku8.net',
+      charset: () => CharsetType.gbk,
+      headers: const {},
+      dio: Dio()..httpClientAdapter = _FakeAdapter({'/x.php': () => ResponseBody.fromBytes(const [], 403)}),
+      challengeFallback: (url, {referer}) async => 'ok',
+    );
+    expect(await client.getPage('https://www.wenku8.net/x.php', charsetParam: false), 'ok');
+  });
+
   test('恢复 cookie 时值里带逗号也不会报错', () async {
     final client = _client(_FakeAdapter({}));
     await client.restoreCookie('jieqiUserInfo=abc;jieqiRecentRead=1792527353,1792527401,1792527434', ['https://www.wenku8.net']);

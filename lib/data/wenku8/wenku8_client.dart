@@ -17,7 +17,7 @@ import 'wenku8_exceptions.dart';
 /// 只负责"发请求 + 处理编码/重定向/Cloudflare + 管理 cookie"，不依赖 GetX 或本地存储：
 /// 节点地址和编码通过构造参数里的函数按需读取，方便测试和以后替换状态管理。
 class Wenku8Client {
-  Wenku8Client({required this.baseUrl, required this.charset, required Map<String, String> headers, Dio? dio, CookieJar? cookieJar})
+  Wenku8Client({required this.baseUrl, required this.charset, required Map<String, String> headers, Dio? dio, CookieJar? cookieJar, this.challengeFallback})
     : _cookieJar = cookieJar ?? CookieJar() {
     this.dio = (dio ?? Dio())
       ..options = BaseOptions(
@@ -45,6 +45,9 @@ class Wenku8Client {
 
   late final Dio dio;
 
+  /// GET 页面被 Cloudflare 验证或 403 拦下时改用它取页面（原生 App 里是不显示的网页），返回解码好的 HTML
+  final Future<String> Function(String url, {String? referer})? challengeFallback;
+
   /// 把登录后拿到的 cookie 字符串（`a=1;b=2`）写入 cookie jar，对 [hosts] 里的每个节点都生效。
   Future<void> restoreCookie(String cookie, Iterable<String> hosts) async {
     final cookies = cookie.split(';').map((e) => e.trim()).where((e) => e.contains('=')).map((e) {
@@ -70,8 +73,17 @@ class Wenku8Client {
   Future<String> getPage(String url, {bool charsetParam = true, String? referer}) async {
     final currentCharset = charset();
     final target = charsetParam || currentCharset != CharsetType.gbk ? Wenku8Charset.withCharsetParam(url, currentCharset) : url;
-    final response = await dio.get(target, options: referer == null ? null : Options(headers: {'Referer': referer}));
-    final bytes = await _followRedirect(response);
+    final Uint8List bytes;
+    try {
+      final response = await dio.get(target, options: referer == null ? null : Options(headers: {'Referer': referer}));
+      bytes = await _followRedirect(response);
+    } on DioException catch (e) {
+      // 书架这类页面不出验证，直接 403 拒绝不像浏览器的请求，也交给网页再试
+      if (e is! CloudflareChallengeException && e is! Cloudflare403Exception) rethrow;
+      final fallback = challengeFallback;
+      if (fallback == null) rethrow;
+      return fallback(target, referer: referer);
+    }
     return Wenku8Charset.decode(bytes, currentCharset);
   }
 
@@ -116,14 +128,14 @@ class Wenku8Client {
 class _CloudflareInterceptor extends Interceptor {
   @override
   void onResponse(Response<dynamic> response, ResponseInterceptorHandler handler) {
-    if (response.statusCode == 403) {
-      handler.reject(Cloudflare403Exception(requestOptions: response.requestOptions));
-      return;
-    }
-
+    // 验证页本身也是 403，先认出来，免得当成被封
     final cfMitigated = response.headers['cf-mitigated'];
     if (cfMitigated != null && cfMitigated.contains('challenge')) {
       handler.reject(CloudflareChallengeException(requestOptions: response.requestOptions));
+      return;
+    }
+    if (response.statusCode == 403) {
+      handler.reject(Cloudflare403Exception(requestOptions: response.requestOptions));
       return;
     }
     handler.next(response);
