@@ -31,6 +31,7 @@ class TxtDownloader {
 
 final txtDownloaderProvider = Provider<TxtDownloader>((ref) {
   final store = ref.watch(sessionStoreProvider);
+  ref.watch(proxyProvider);
   final dio = Dio(
     BaseOptions(
       responseType: ResponseType.bytes,

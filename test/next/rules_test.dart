@@ -10,6 +10,13 @@ void main() {
     expect(ReplaceRules.apply('12话 广告正文', rules), '第12话 正文');
   });
 
+  test('替换串里的分组引用超出捕获组数量时不报错并保留原字符串', () {
+    final rules = [
+      const ReplaceRule(pattern: r'(\d+)话', replacement: r'第$1话-$2'),
+    ];
+    expect(ReplaceRules.apply('12话', rules), r'第12话-$2');
+  });
+
   test('停用的和写错的规则被跳过', () {
     final rules = [const ReplaceRule(pattern: 'a', replacement: 'b', enabled: false), const ReplaceRule(pattern: '(', replacement: 'x')];
     expect(ReplaceRules.apply('aaa(', rules), 'aaa(');

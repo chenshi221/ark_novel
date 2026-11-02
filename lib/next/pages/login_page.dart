@@ -67,7 +67,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     final store = ref.read(sessionStoreProvider);
     final username = _username.text.trim();
     if (username.isEmpty || _password.text.isEmpty) throw '请输入用户名和密码';
-    await store.setProxy(_proxy.text);
+    await ref.read(proxyProvider.notifier).set(_proxy.text);
     await store.setKeepSeconds(_keepSeconds);
     if (isWebPreview) {
       await ref.read(sessionProvider.notifier).loginWithPassword(username, _password.text, _keepSeconds);

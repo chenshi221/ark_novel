@@ -100,6 +100,7 @@ class UnlockService {
 
 final appApiProvider = Provider<Wenku8AppApi>((ref) {
   final store = ref.watch(sessionStoreProvider);
+  ref.watch(proxyProvider);
   final dio = Dio(BaseOptions(responseType: ResponseType.bytes, connectTimeout: const Duration(seconds: 12), receiveTimeout: const Duration(seconds: 30)))
     ..httpClientAdapter = store.adapter();
   return Wenku8AppApi(dio: dio);

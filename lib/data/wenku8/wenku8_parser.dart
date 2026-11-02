@@ -127,37 +127,46 @@ class Wenku8Parser {
   static Wenku8NovelDetail novelDetail(String html) {
     final Element? t1 = parse(html).getElementById('content');
     if (t1 == null) throw const Wenku8UnexpectedPageException("novel detail: #content not found");
-    final Element t2 = t1.getElementsByTagName('table')[0];
+    final tables = t1.getElementsByTagName('table');
+    // 结构不对就不是详情页：报错，不能当成功，否则会用空数据覆盖缓存里的好页面
+    if (tables.length < 3) throw const Wenku8UnexpectedPageException("novel detail: tables not found");
+    final Element t2 = tables[0];
     final String title = t2.querySelector('span > b')?.text.trim() ?? '';
-    final tds = t2.getElementsByTagName('tr')[2].getElementsByTagName('td');
-    final String author = tds[1].text.trim().substring(5);
-    final String status = tds[2].text.trim().substring(5);
+    final trs = t2.getElementsByTagName('tr');
+    final tds = trs.length > 2 ? trs[2].getElementsByTagName('td') : <Element>[];
+    if (tds.length < 3) throw const Wenku8UnexpectedPageException("novel detail: info row not found");
+    final authorText = tds[1].text.trim();
+    final String author = authorText.length >= 5 ? authorText.substring(5) : authorText;
+    final statusText = tds[2].text.trim();
+    final String status = statusText.length >= 5 ? statusText.substring(5) : statusText;
     String? lastUpdate;
-    try {
-      lastUpdate = tds[3].text.trim().substring(5);
-    } catch (_) {
-      lastUpdate = null; // 没有"最后更新"一栏说明已下架
+    if (tds.length > 3) {
+      final t = tds[3].text.trim();
+      lastUpdate = t.length >= 5 ? t.substring(5) : null;
     }
 
-    final String imgUrl = ImageUrlHelper.normalize(t1.getElementsByTagName('img')[0].attributes['src'] ?? '');
-    final table2 = t1.getElementsByTagName('table')[2];
-    final spans = table2.getElementsByTagName('td')[1].getElementsByTagName('span');
+    final imgs = t1.getElementsByTagName('img');
+    if (imgs.isEmpty) throw const Wenku8UnexpectedPageException("novel detail: cover not found");
+    final String imgUrl = ImageUrlHelper.normalize(imgs[0].attributes['src'] ?? '');
+    final table2Tds = tables[2].getElementsByTagName('td');
+    final spans = table2Tds.length > 1 ? table2Tds[1].getElementsByTagName('span') : <Element>[];
+    if (spans.length < 2) throw const Wenku8UnexpectedPageException("novel detail: tags not found");
     String introduce = spans.length > 5 ? spans[5].innerHtml.replaceAll("<br>", "\n") : "";
     final String tag = spans[0].text;
     final String tempHeat = spans[1].text;
-    final firstTdSpans = table2.getElementsByTagName('td')[0].getElementsByTagName('span');
+    final firstTdSpans = table2Tds[0].getElementsByTagName('span');
     final bool isAnimated = firstTdSpans.isNotEmpty;
 
     String? heat;
     String? trending;
     if (lastUpdate == null) {
       introduce = tempHeat; // 下架书籍的简介在这个位置
-    } else {
+    } else if (tempHeat.length >= 19) {
       heat = tempHeat.substring(5, 7);
       trending = tempHeat.length >= 20 ? tempHeat.substring(18, 20) : tempHeat.substring(18, 19);
     }
 
-    final tags = tag.replaceRange(0, 7, "").split(" ");
+    final tags = (tag.length >= 7 ? tag.substring(7) : tag).split(" ").where((t) => t.isNotEmpty).toList();
 
     return Wenku8NovelDetail(
       title: title,

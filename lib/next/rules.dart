@@ -116,7 +116,15 @@ class ReplaceRules {
     for (final r in rules ?? all()) {
       if (!r.enabled || r.kind != RuleKind.replace || r.pattern.isEmpty) continue;
       try {
-        out = out.replaceAllMapped(RegExp(r.pattern, multiLine: true), (m) => r.replacement.replaceAllMapped(RegExp(r'\$(\d)'), (g) => m.group(int.parse(g[1]!)) ?? ''));
+        out = out.replaceAllMapped(
+          RegExp(r.pattern, multiLine: true),
+          (m) => r.replacement.replaceAllMapped(RegExp(r'\$(\d)'), (g) {
+            final idx = int.parse(g[1]!);
+            if (idx == 0) return m[0] ?? '';
+            if (idx <= m.groupCount) return m.group(idx) ?? '';
+            return g[0]!;
+          }),
+        );
       } catch (_) {}
     }
     return out;

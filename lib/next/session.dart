@@ -141,26 +141,56 @@ class NodeController extends Notifier<Wenku8Node> {
 
 final nodeProvider = NotifierProvider<NodeController, Wenku8Node>(NodeController.new);
 
+/// 当前 HTTP 代理配置控制器。
+class HttpProxyController extends Notifier<String> {
+  Timer? _debounce;
+
+  @override
+  String build() {
+    ref.onDispose(() => _debounce?.cancel());
+    return ref.read(sessionStoreProvider).proxy;
+  }
+
+  /// 输入框用：停手一会儿才生效，半截地址不当代理用。
+  void setLater(String proxy) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(seconds: 1), () => set(proxy));
+  }
+
+  Future<void> set(String proxy) async {
+    _debounce?.cancel();
+    final trimmed = proxy.trim();
+    await ref.read(sessionStoreProvider).setProxy(trimmed);
+    state = trimmed;
+  }
+}
+
+final proxyProvider = NotifierProvider<HttpProxyController, String>(HttpProxyController.new);
+
 /// 当前用于请求的站点地址：网页预览走转发程序，原生 App 直连所选节点。
 String siteBase(Wenku8Node node) => isWebPreview ? previewProxyBase : node.node;
 
 final wenku8ClientProvider = Provider<Wenku8Client>((ref) {
   final store = ref.watch(sessionStoreProvider);
-  return Wenku8Client(
+  final client = Wenku8Client(
     // 用 read：客户端自己带着 cookie jar，节点变了只换地址，不能重建
     baseUrl: () => siteBase(ref.read(nodeProvider)),
     charset: () => CharsetType.gbk,
     // 浏览器不允许网页设置 User-Agent，由转发程序代为添加
     headers: kIsWeb ? const {} : {'User-Agent': store.userAgent},
     dio: kIsWeb ? null : (Dio()..httpClientAdapter = store.adapter()),
-    challengeFallback: kIsWeb ? null : webFetch,
+    challengeFallback: kIsWeb ? null : (url, {referer}) => webFetch(url, referer: referer, proxy: ref.read(proxyProvider)),
   );
+  // shortcut: 换代理时旧适配器不关（Cronet 有请求在途时关闭可能出错），只有手动改代理才多留一个，真成问题再等请求结束后关
+  if (!kIsWeb) ref.listen(proxyProvider, (_, _) => client.dio.httpClientAdapter = store.adapter());
+  return client;
 });
 
 /// 图片专用的 Dio：和请求页面一样走所选代理，并带上浏览器 UA 和 Referer（图片服务器会检查）。
 final imageDioProvider = Provider<Dio>((ref) {
   final store = ref.watch(sessionStoreProvider);
   final node = ref.watch(nodeProvider);
+  ref.watch(proxyProvider);
   return Dio(BaseOptions(responseType: ResponseType.bytes, connectTimeout: const Duration(seconds: 12), receiveTimeout: const Duration(seconds: 25), headers: {'User-Agent': store.userAgent, 'Referer': '${siteBase(node)}/'}))
     ..httpClientAdapter = store.adapter();
 });
