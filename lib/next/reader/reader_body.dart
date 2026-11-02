@@ -9,6 +9,7 @@ import '../rules.dart';
 import '../settings.dart';
 import '../widgets.dart';
 import 'page_curl.dart';
+import 'page_physics.dart';
 import 'paginator.dart';
 
 /// 章节：正文（已套用替换规则、统一缩进）、插图地址、高亮位置。
@@ -636,6 +637,7 @@ class _PagedBodyState extends State<PagedBody> {
   int _page = 0;
   int _cur = 0; // 当前读到的字符偏移，重新分页时按它定位
   double _overscroll = 0;
+  double? _dragFrom; // 这次拖动开始时在第几页，翻页手感按它算（见 SwipePagePhysics）
   int _cols = 1; // 一屏几页（1 或 2）；_page、翻页动画的"页"都以一屏为单位
   double _head = 0; // 第一页开头章节标题的高度
   double _width = 0;
@@ -856,9 +858,11 @@ class _PagedBodyState extends State<PagedBody> {
           _controller ??= PageController(initialPage: _page);
           pages = NotificationListener<ScrollNotification>(
             onNotification: (n) {
+              if (n is ScrollStartNotification) _dragFrom = n.dragDetails == null ? null : _controller?.page;
               // 第一页往前滑、最后一页往后滑：松手后切到上一章 / 下一章
               if (n is OverscrollNotification) _overscroll = n.overscroll;
               if (n is ScrollEndNotification) {
+                _dragFrom = null;
                 if (_overscroll > 0) widget.onNext?.call();
                 if (_overscroll < 0) widget.onPrev?.call();
                 _overscroll = 0;
@@ -868,7 +872,9 @@ class _PagedBodyState extends State<PagedBody> {
             child: PageView.builder(
               key: ValueKey(sig),
               controller: _controller,
-              physics: const PageScrollPhysics(parent: ClampingScrollPhysics()),
+              // 拖一小段就翻页（不用拖过半屏）；对齐到整页由 SwipePagePhysics 自己做，所以关掉 pageSnapping
+              pageSnapping: false,
+              physics: SwipePagePhysics(origin: () => _dragFrom, parent: const ClampingScrollPhysics()),
               itemCount: _units,
               onPageChanged: _changed,
               itemBuilder: (context, i) => _pageContent(context, i, true, pad),
