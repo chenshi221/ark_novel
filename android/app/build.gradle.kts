@@ -29,6 +29,15 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        getByName("debug") {
+            val customKeystore = file("${System.getProperty("user.home")}/.android/hikari-debug.keystore")
+            if (customKeystore.exists()) {
+                storeFile = customKeystore
+            }
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.

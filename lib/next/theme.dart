@@ -164,6 +164,7 @@ ThemeData buildAppTheme(Brightness brightness, [AppPalette palette = const AppPa
       elevation: 0,
     ),
     dividerTheme: DividerThemeData(color: scheme.outline, thickness: 1, space: 1),
+    popupMenuTheme: const PopupMenuThemeData(position: PopupMenuPosition.under),
     snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
     dialogTheme: palette.scene ? DialogThemeData(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))) : null,
     bottomSheetTheme: palette.scene ? const BottomSheetThemeData(shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(12)))) : null,

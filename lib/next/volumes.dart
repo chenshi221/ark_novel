@@ -54,18 +54,76 @@ class Volumes {
   ];
 
   /// 目录加载后记下卷列表，并顺带核对一遍哪些卷读完了。
+  /// 若某卷原本没有插图章（或之前取封面时记成了空串 `''` / Bangumi 兜底），后来更新补上了插图章，
+  /// 自动清掉非手动挑选的旧封面记录与插图章缓存，让封面队列重新去取真正的卷插图。
   static Future<void> saveCatalogue(String aid, List<CatVolume> cat) async {
+    final old = of(aid);
+    final oldIllus = {for (final v in old) v.title: v.illus};
     final next = [
       for (final v in cat)
         {'t': v.title, 'c': [for (final c in v.chapters) c.cid], 'i': v.chapters.where((c) => isIllustration(c.title)).firstOrNull?.cid},
     ];
     if (!listEquals(
       next.map((e) => '${e['t']}|${(e['c'] as List).join(',')}|${e['i']}').toList(),
-      of(aid).map((v) => '${v.title}|${v.cids.join(',')}|${v.illus}').toList(),
+      old.map((v) => '${v.title}|${v.cids.join(',')}|${v.illus}').toList(),
     )) {
       await _box.put('vols:$aid', next);
     }
+    final covers = _covers(aid);
+    if (covers.isNotEmpty) {
+      final picked = _picked(aid);
+      final updated = {...covers};
+      final staleCids = <String>[];
+      for (final e in next) {
+        final title = e['t'] as String;
+        final illus = e['i'] as String?;
+        final saved = covers[title];
+        if (illus == null || saved == null) continue;
+        final manual = picked.contains(title) || saved.contains('#crop=');
+        if (manual) continue;
+        // 之前没有插图章而后补上了插图章，或者之前没取到插图记成了 ''：清掉旧记录重新抓取
+        if ((old.isNotEmpty && oldIllus[title] != illus) || saved.isEmpty) {
+          updated.remove(title);
+          staleCids.add(illus);
+        }
+      }
+      if (updated.length != covers.length) {
+        await _box.put('vcover2:$aid', updated);
+        if (staleCids.isNotEmpty && Hive.isBoxOpen('chapter_index')) {
+          await ChapterCache.removeChapters(aid, staleCids, compact: false);
+        }
+        changes.value++;
+      }
+    }
     await refreshDone(aid);
+  }
+
+  /// 更新检查发现新章节时：若新章节属于某卷的插图章（或该卷之前未取到插图封面），清掉自动封面记录以便重新抓取。
+  static Future<void> invalidateAutoCoverForChapters(String aid, Iterable<String> newCids) async {
+    final cids = newCids.toSet();
+    if (cids.isEmpty) return;
+    final covers = _covers(aid);
+    if (covers.isEmpty) return;
+    final picked = _picked(aid);
+    final updated = {...covers};
+    final staleCids = <String>[];
+    for (final v in of(aid)) {
+      final saved = covers[v.title];
+      if (saved == null || picked.contains(v.title) || saved.contains('#crop=')) continue;
+      final touched = v.cids.any(cids.contains);
+      if (!touched) continue;
+      if ((v.illus != null && cids.contains(v.illus)) || saved.isEmpty) {
+        updated.remove(v.title);
+        if (v.illus != null) staleCids.add(v.illus!);
+      }
+    }
+    if (updated.length != covers.length) {
+      await _box.put('vcover2:$aid', updated);
+      if (staleCids.isNotEmpty && Hive.isBoxOpen('chapter_index')) {
+        await ChapterCache.removeChapters(aid, staleCids, compact: false);
+      }
+      changes.value++;
+    }
   }
 
   /// [cid] 在第几卷，找不到为 -1。
@@ -102,10 +160,14 @@ class Volumes {
     changes.value++;
   }
 
-  /// 去掉自选的封面，下次显示时重新自动挑
+  /// 去掉自选的封面，下次显示时重新自动挑（同时清掉该卷插图章的本地缓存，以便重新联网抓取最新插图）
   static Future<void> resetCover(String aid, String title) async {
     await _box.put('vcover2:$aid', {..._covers(aid)}..remove(title));
     await _box.put('vpick:$aid', (_picked(aid)..remove(title)).toList());
+    final illus = of(aid).where((v) => v.title == title).firstOrNull?.illus;
+    if (illus != null && Hive.isBoxOpen('chapter_index')) {
+      await ChapterCache.removeChapters(aid, [illus], compact: false);
+    }
     changes.value++;
   }
 
@@ -204,6 +266,7 @@ class VolumeCoverQueue {
   final _bgmTried = <(String, String)>{}; // 这次运行里已经按 Bangumi 补过（或者对不上）的卷
   final _bgmFilling = <String>{};
   final _bgmFailed = <String>{}; // 连不上 Bangumi、图下不下来的书，这次运行不再试
+  final _emptyTried = <(String, String)>{}; // 之前记成 '' 但现在有插图章的卷，本次运行重抓一次
 
   /// 后台把这些书在书架上显示的封面（第一卷的）取下来（打开 App、同步完书架后调用）。其他卷不常看，打开卷册页时再取。
   Future<void> prefetchAll(Iterable<String> aids) {
@@ -234,7 +297,7 @@ class VolumeCoverQueue {
   String? get(String aid, Vol v) {
     if (!LibraryStore.contains(aid)) return null;
     final url = Volumes.cover(aid, v.title);
-    if (url == null && !_queue.contains((aid, v.title))) {
+    if ((url == null || (url.isEmpty && v.illus != null && _emptyTried.add((aid, v.title)))) && !_queue.contains((aid, v.title))) {
       _queue.add((aid, v.title));
       Future.microtask(_pump);
     }
@@ -271,13 +334,15 @@ class VolumeCoverQueue {
       while (_queue.isNotEmpty || _bg.isNotEmpty) {
         final (aid, title) = _queue.isNotEmpty ? _queue.removeLast() : _bg.removeAt(0);
         final v = Volumes.of(aid).where((v) => v.title == title).firstOrNull;
-        if (v == null || Volumes.cover(aid, title) != null) continue;
+        final existing = Volumes.cover(aid, title);
+        if (v == null || (existing != null && (existing.isNotEmpty || v.illus == null))) continue;
         if (v.illus == null) {
           await Volumes.setCover(aid, title, '');
           _fillFromBangumi(aid).ignore();
           continue;
         }
         var content = await ChapterCache.get(aid, v.illus!);
+        if (content != null && content.images.isEmpty) content = null;
         if (content == null) {
           final ticket = ChapterCache.ticket(aid, v.illus!);
           try {
@@ -293,7 +358,7 @@ class VolumeCoverQueue {
             await skip();
             continue;
           }
-          await ChapterCache.put(aid, v.illus!, content, ticket: ticket);
+          if (content.images.isNotEmpty) await ChapterCache.put(aid, v.illus!, content, ticket: ticket);
           await Future<void>.delayed(const Duration(milliseconds: 1500));
         }
         final String url;

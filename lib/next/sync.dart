@@ -1,11 +1,20 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show ValueNotifier, kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
+import 'app_prefs.dart';
+import 'library.dart';
+import 'pages/profile_page.dart';
+import 'settings.dart';
+import 'updates.dart';
 import 'volumes.dart';
 
 /// 同步：每台设备把自己的数据整份写成 `<文件夹>/<设备ID>.json` 放到 WebDAV（坚果云），
@@ -25,6 +34,9 @@ class Sync {
 
   static Box get _box => Hive.box('session');
 
+  /// 同步合并完成时通知界面刷新（书架、分类、封面、头像、偏好等）
+  static final changes = ValueNotifier<int>(0);
+
   static const _secure = FlutterSecureStorage(mOptions: MacOsOptions(usesDataProtectionKeychain: false)); // 没开发者签名的 Mac 版用不了新式钥匙串（-34018）
 
   static String get url => (_box.get('sync:url') as String?) ?? 'https://dav.jianguoyun.com/dav/';
@@ -34,8 +46,11 @@ class Sync {
   static int get lastSync => (_box.get('sync:last') as int?) ?? 0;
   static bool get configured => user.isNotEmpty;
 
-  /// 应用密码：优先放系统安全存储，不可用时（比如没签名的 Mac 版）退回本地数据库。
+  static bool get _useLocalPass => kIsWeb || Platform.isMacOS;
+
+  /// 应用密码：安卓/iOS 放系统安全存储；Mac 版（无开发者证书签名访问钥匙串会反复弹窗要密码）直接存沙盒本地库。
   static Future<String> password() async {
+    if (_useLocalPass) return (_box.get('sync:pass') as String?) ?? '';
     try {
       final p = await _secure.read(key: 'syncPass');
       if (p != null) return p;
@@ -45,6 +60,10 @@ class Sync {
 
   static Future<void> save({required String url, required String user, required String pass, required String folder}) async {
     await _box.putAll({'sync:url': url.trim(), 'sync:user': user.trim(), 'sync:folder': folder.trim().isEmpty ? defaultFolder : folder.trim()});
+    if (_useLocalPass) {
+      await _box.put('sync:pass', pass);
+      return;
+    }
     try {
       await _secure.write(key: 'syncPass', value: pass);
       await _box.delete('sync:pass');
@@ -83,11 +102,32 @@ class Sync {
 
   static Iterable<String> _keys(String prefix) => _box.keys.whereType<String>().where((k) => k.startsWith(prefix));
 
+  static Map<String, dynamic>? _avatarSnapshot() {
+    if (kIsWeb || !AppPrefs.read(P.syncAvatar, true)) return null;
+    final path = _box.get('avatar') as String?;
+    final ts = _box.get('avatar:ts') as int?;
+    if (path != null && path.isNotEmpty) {
+      final file = File(path);
+      if (file.existsSync()) {
+        try {
+          return {
+            'ts': ts ?? file.lastModifiedSync().millisecondsSinceEpoch,
+            'ext': p.extension(path),
+            'data': base64Encode(file.readAsBytesSync()),
+          };
+        } catch (_) {}
+      }
+    }
+    if (ts != null) return {'ts': ts, 'data': null};
+    return null;
+  }
+
   /// 本机要同步的数据（不含从别的设备并入的统计）。
   static Map<String, dynamic> snapshot() {
     Map<String, dynamic> byAid(String prefix) => {for (final k in _keys(prefix)) k.substring(prefix.length): _box.get(k)};
+    final avatar = _avatarSnapshot();
     return {
-      'v': 2,
+      'v': 3,
       'device': deviceId,
       'at': DateTime.now().millisecondsSinceEpoch,
       'progress': byAid('progress:'),
@@ -100,6 +140,39 @@ class Sync {
       'rules': _box.get('rules') ?? const [],
       'notes': byAid('notes:'),
       'tomb': _tombs(),
+      'books': _box.get('lib:books') ?? const {},
+      'cats': _box.get('lib:cats') ?? const [],
+      'shelfTabOrder': _box.get('shelfTabOrder'),
+      'shelfOrder': byAid('shelfOrder:'),
+      'vcover': byAid('vcover2:'),
+      'vpick': byAid('vpick:'),
+      'vols': byAid('vols:'),
+      'updates': {
+        'feed': _box.get('updates') ?? const [],
+        'known': _box.get('updates:known') ?? const {},
+        'seen': _box.get('updates:seen') ?? 0,
+        'at': byAid('updates:at:'),
+      },
+      'avatar': ?avatar,
+      'shelfPrefs': {
+        'ts': (_box.get('sync:prefsTs') as int?) ?? 0,
+        'shelfOpts': _box.get('shelfOpts'),
+        'p': {
+          for (final k in _keys('p.'))
+            if ((k.startsWith('p.shelf.') || k.startsWith('p.upd.')) && k != 'p.${P.colsPortrait}' && k != 'p.${P.colsLandscape}') k: _box.get(k),
+        },
+      },
+      'readerPrefs': {
+        'ts': (_box.get('sync:readerTs') as int?) ?? 0,
+        'r': {for (final k in _keys('r.')) k: _box.get(k)},
+        'volumeDone': _box.get('p.${P.volumeDone}'),
+      },
+      'appearance': {
+        'ts': (_box.get('sync:appearanceTs') as int?) ?? (_box.get('sync:prefsTs') as int?) ?? 0,
+        'themeMode': _box.get('themeMode'),
+        'palette': _box.get('palette'),
+        'p': {for (final k in _keys('p.ui.')) k: _box.get(k)},
+      },
       'stats': {
         'day': _box.get('stats:day') ?? const {},
         'book': _box.get('stats:book') ?? const {},
@@ -198,12 +271,239 @@ class Sync {
       puts['notes:${e.key}'] = local;
     }
 
+    // 书架分类（例如"在追"）与书架书籍（含重命名 name、所属分类 cats）
+    final catIdMap = <String, String>{};
+    if (remote['cats'] != null || remote['books'] != null) {
+      final cats = _maps(_box.get('lib:cats')).where((c) => !dead('cat:${c['id']}', ts(c))).toList();
+      for (final r in _maps(remote['cats'])) {
+        final rId = '${r['id']}';
+        final rName = '${r['name']}';
+        final rTs = ts(r);
+        if (dead('cat:$rId', rTs)) continue;
+        final byId = cats.indexWhere((c) => c['id'] == rId);
+        if (byId >= 0) {
+          if (rTs > ts(cats[byId])) cats[byId] = {'id': rId, 'name': rName, 'ts': rTs};
+        } else {
+          final byName = cats.indexWhere((c) => c['name'] == rName);
+          if (byName >= 0) {
+            catIdMap[rId] = '${cats[byName]['id']}';
+          } else {
+            cats.add({'id': rId, 'name': rName, 'ts': rTs});
+          }
+        }
+      }
+      puts['lib:cats'] = cats;
+
+      final validCatIds = {for (final c in cats) '${c['id']}'};
+      final localBooks = <String, Map<String, dynamic>>{};
+      for (final e in ((_box.get('lib:books') as Map?) ?? const {}).entries) {
+        final aid = '${e.key}';
+        final b = Map<String, dynamic>.from(e.value as Map);
+        final bTime = max((b['added'] as int?) ?? 0, (b['ts'] as int?) ?? 0);
+        if (!dead('lib:$aid', bTime)) localBooks[aid] = b;
+      }
+      for (final e in ((remote['books'] as Map?) ?? const {}).entries) {
+        final aid = '${e.key}';
+        if (e.value is! Map) continue;
+        final r = Map<String, dynamic>.from(e.value as Map);
+        final rAdded = (r['added'] as int?) ?? 0;
+        final rTs = (r['ts'] as int?) ?? 0;
+        if (dead('lib:$aid', max(rAdded, rTs))) continue;
+        final rCats = {
+          for (final c in ((r['cats'] as List?) ?? const []).cast<String>())
+            if (validCatIds.contains(catIdMap[c] ?? c)) catIdMap[c] ?? c,
+        }.toList();
+        final l = localBooks[aid];
+        if (l == null) {
+          localBooks[aid] = {
+            'aid': aid,
+            'title': r['title'] ?? '',
+            'img': r['img'] ?? '',
+            'added': rAdded,
+            'cats': rCats,
+            'bid': null,
+            'done': r['done'] == true,
+            'name': r['name'],
+            'ts': rTs,
+          };
+        } else {
+          final lAdded = (l['added'] as int?) ?? 0;
+          final lTs = (l['ts'] as int?) ?? 0;
+          final lCats = [
+            for (final c in ((l['cats'] as List?) ?? const []).cast<String>())
+              if (validCatIds.contains(c)) c,
+          ];
+          final mergedName = rTs > lTs ? r['name'] : (lTs > rTs ? l['name'] : (l['name'] ?? r['name']));
+          final mergedCats = rTs > lTs ? rCats : (lTs > rTs ? lCats : (lCats.isNotEmpty ? lCats : rCats));
+          localBooks[aid] = {
+            'aid': aid,
+            'title': (l['title'] as String?)?.isNotEmpty == true ? l['title'] : (r['title'] ?? ''),
+            'img': (l['img'] as String?)?.isNotEmpty == true ? l['img'] : (r['img'] ?? ''),
+            'added': lAdded > 0 && rAdded > 0 ? min(lAdded, rAdded) : max(lAdded, rAdded),
+            'cats': mergedCats,
+            'bid': l['bid'],
+            'done': (l['done'] == true) || (r['done'] == true),
+            'name': mergedName,
+            'ts': max(lTs, rTs),
+          };
+        }
+      }
+      puts['lib:books'] = localBooks;
+    }
+
+    if (remote['shelfTabOrder'] is List && _box.get('shelfTabOrder') == null) {
+      puts['shelfTabOrder'] = [for (final c in (remote['shelfTabOrder'] as List).cast<String>()) catIdMap[c] ?? c];
+    }
+    for (final e in ((remote['shelfOrder'] as Map?) ?? const {}).entries) {
+      final catKey = catIdMap['${e.key}'] ?? '${e.key}';
+      if (_box.get('shelfOrder:$catKey') == null && e.value is List) {
+        puts['shelfOrder:$catKey'] = (e.value as List).cast<String>();
+      }
+    }
+
+    // 分卷目录与卷封面（含手动挑过 / 裁剪过的 #crop= 封面，手动挑的优先于自动挑的）
+    for (final e in ((remote['vols'] as Map?) ?? const {}).entries) {
+      final l = _box.get('vols:${e.key}') as List?;
+      final r = e.value as List?;
+      if (r != null && (l == null || r.length > l.length)) puts['vols:${e.key}'] = r;
+    }
+    var coverChanged = false;
+    final rVcover = (remote['vcover'] as Map?) ?? const {};
+    final rVpick = (remote['vpick'] as Map?) ?? const {};
+    for (final aid in {...rVcover.keys.map((k) => '$k'), ...rVpick.keys.map((k) => '$k')}) {
+      final lPick = ((_box.get('vpick:$aid') as List?) ?? const []).cast<String>().toSet();
+      final rPick = ((rVpick[aid] as List?) ?? const []).cast<String>().toSet();
+      final lCover = Map<String, String>.from(((_box.get('vcover2:$aid') as Map?) ?? const {}).map((k, v) => MapEntry('$k', '$v')));
+      final rCover = Map<String, String>.from(((rVcover[aid] as Map?) ?? const {}).map((k, v) => MapEntry('$k', '$v')));
+      for (final e in rCover.entries) {
+        final title = e.key, rUrl = e.value;
+        final lUrl = lCover[title];
+        final rManual = rPick.contains(title) || rUrl.contains('#crop=');
+        final lManual = lPick.contains(title) || (lUrl?.contains('#crop=') ?? false);
+        if (rManual && !lManual) {
+          lCover[title] = rUrl;
+          coverChanged = true;
+        } else if (rManual && lManual) {
+          if (lUrl == null || lUrl.isEmpty) {
+            lCover[title] = rUrl;
+            coverChanged = true;
+          }
+        } else if ((lUrl == null || lUrl.isEmpty) && rUrl.isNotEmpty) {
+          lCover[title] = rUrl;
+          coverChanged = true;
+        }
+      }
+      final mergedPick = {...lPick, ...rPick};
+      if (lCover.isNotEmpty) puts['vcover2:$aid'] = lCover;
+      if (mergedPick.isNotEmpty) puts['vpick:$aid'] = mergedPick.toList();
+    }
+
+    // 更新列表与章节基准（让手机和电脑看到的更新一致）
+    if (remote['updates'] is Map) {
+      final ru = remote['updates'] as Map;
+      final feedMap = <String, Map>{};
+      for (final f in [..._maps(_box.get('updates')), ..._maps(ru['feed'])]) {
+        final key = '${f['aid']}:${f['cid']}';
+        final old = feedMap[key];
+        if (old == null || (f['time'] as int) > (old['time'] as int)) feedMap[key] = f;
+      }
+      puts['updates'] = (feedMap.values.toList()..sort((a, b) => (b['time'] as int).compareTo(a['time'] as int))).take(300).toList();
+      final known = Map<String, int>.from(((_box.get('updates:known') as Map?) ?? const {}).map((k, v) => MapEntry('$k', v as int)));
+      for (final e in ((ru['known'] as Map?) ?? const {}).entries) {
+        known['${e.key}'] = max(known['${e.key}'] ?? 0, e.value as int);
+      }
+      puts['updates:known'] = known;
+      final rSeen = (ru['seen'] as int?) ?? 0;
+      final lSeen = (_box.get('updates:seen') as int?) ?? 0;
+      if (rSeen > lSeen) puts['updates:seen'] = rSeen;
+      for (final e in ((ru['at'] as Map?) ?? const {}).entries) {
+        final k = 'updates:at:${e.key}';
+        final rAt = e.value as int;
+        final lAt = (_box.get(k) as int?) ?? 0;
+        if (rAt > lAt) puts[k] = rAt;
+      }
+    }
+
+    // 可选同步项：按本机的开关决定是否并入
+    if (!kIsWeb && AppPrefs.read(P.syncAvatar, true) && remote['avatar'] is Map) {
+      final ra = remote['avatar'] as Map;
+      final rTs = (ra['ts'] as int?) ?? 0;
+      final lTs = (_box.get('avatar:ts') as int?) ?? 0;
+      if (rTs > lTs) {
+        final data = ra['data'] as String?;
+        if (data != null && data.isNotEmpty) {
+          try {
+            final bytes = base64Decode(data);
+            final ext = (ra['ext'] as String?) ?? '.png';
+            Directory dir;
+            try {
+              dir = Directory(p.join((await getApplicationSupportDirectory()).path, 'avatar'));
+            } catch (_) {
+              dir = Directory(p.join(Directory.systemTemp.path, 'ark_avatar'));
+            }
+            if (await dir.exists()) await dir.delete(recursive: true);
+            await dir.create(recursive: true);
+            final dest = File(p.join(dir.path, 'avatar_$rTs$ext'));
+            await dest.writeAsBytes(bytes);
+            puts['avatar'] = dest.path;
+            puts['avatar:ts'] = rTs;
+          } catch (_) {}
+        } else {
+          await _box.delete('avatar');
+          puts['avatar:ts'] = rTs;
+        }
+      }
+    }
+
+    if (AppPrefs.read(P.syncShelfPrefs, false) && remote['shelfPrefs'] is Map) {
+      final sp = remote['shelfPrefs'] as Map;
+      final rTs = (sp['ts'] as int?) ?? 0;
+      final lTs = (_box.get('sync:prefsTs') as int?) ?? 0;
+      if (rTs >= lTs) {
+        if (sp['shelfOpts'] is Map) puts['shelfOpts'] = sp['shelfOpts'];
+        for (final e in ((sp['p'] as Map?) ?? const {}).entries) {
+          final k = '${e.key}';
+          if (k != 'p.${P.colsPortrait}' && k != 'p.${P.colsLandscape}') puts[k] = e.value;
+        }
+        puts['sync:prefsTs'] = rTs;
+      }
+    }
+
+    if (AppPrefs.read(P.syncReaderPrefs, false) && remote['readerPrefs'] is Map) {
+      final rp = remote['readerPrefs'] as Map;
+      final rTs = (rp['ts'] as int?) ?? 0;
+      final lTs = (_box.get('sync:readerTs') as int?) ?? 0;
+      if (rTs >= lTs) {
+        for (final e in ((rp['r'] as Map?) ?? const {}).entries) {
+          puts['${e.key}'] = e.value;
+        }
+        if (rp['volumeDone'] != null) puts['p.${P.volumeDone}'] = rp['volumeDone'];
+        puts['sync:readerTs'] = rTs;
+      }
+    }
+
+    if (AppPrefs.read(P.syncAppearance, false) && remote['appearance'] is Map) {
+      final ap = remote['appearance'] as Map;
+      final rTs = (ap['ts'] as int?) ?? 0;
+      final lTs = (_box.get('sync:appearanceTs') as int?) ?? 0;
+      if (rTs >= lTs) {
+        if (ap['themeMode'] != null) puts['themeMode'] = ap['themeMode'];
+        if (ap['palette'] != null) puts['palette'] = ap['palette'];
+        for (final e in ((ap['p'] as Map?) ?? const {}).entries) {
+          puts['${e.key}'] = e.value;
+        }
+        puts['sync:appearanceTs'] = rTs;
+      }
+    }
+
     // 统计：单独存放
     puts['sync:stats:${remote['device']}'] = jsonEncode(remote['stats']);
     await _box.putAll(puts);
     for (final aid in ((remote['read'] as Map?) ?? const {}).keys) {
       await Volumes.refreshDone('$aid');
     }
+    if (coverChanged) Volumes.changes.value++;
+    changes.value++;
   }
 
   /// 其他设备的统计（设备 → 内容），统计页把它们加到本机数据上。
@@ -309,11 +609,22 @@ class SyncController extends Notifier<SyncStatus> {
   @override
   SyncStatus build() => const SyncStatus();
 
+  void refreshProviders() {
+    ref.invalidate(libraryProvider);
+    ref.invalidate(updateProvider);
+    ref.invalidate(avatarProvider);
+    ref.invalidate(appPrefsProvider);
+    ref.invalidate(readerPrefsProvider);
+    ref.invalidate(themeModeProvider);
+    ref.invalidate(paletteProvider);
+  }
+
   Future<void> run() async {
     if (state.busy) return;
     state = const SyncStatus(busy: true);
     try {
       final n = await Sync.run();
+      refreshProviders();
       state = SyncStatus(message: n == 0 ? '已同步（还没有别的设备的数据）' : '已同步，合并了 $n 台设备的数据');
     } catch (e) {
       state = SyncStatus(message: e is DioException ? '网络错误：${e.message ?? e.type.name}' : '$e');

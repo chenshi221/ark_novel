@@ -29,7 +29,7 @@ class PageCurlController {
 ///
 /// 往回翻不卷页：上一页从左边水平滑进来，盖在当前页上（和常见阅读器一致）。
 class PageCurl extends StatefulWidget {
-  const PageCurl({super.key, this.debugT, this.debugDir = 1, this.debugCorner = 1, this.cover = false, required this.pageCount, required this.pageBuilder, required this.initialIndex, required this.background, this.controller, this.onIndexChanged, this.onReachStart, this.onReachEnd});
+  const PageCurl({super.key, this.debugT, this.debugDir = 1, this.debugCorner = 1, this.cover = false, this.dual = false, required this.pageCount, required this.pageBuilder, required this.initialIndex, required this.background, this.controller, this.onIndexChanged, this.onReachStart, this.onReachEnd});
 
   /// 仅用于 tool/curl_demo.dart 目测：把折叠状态固定在进度 [debugT]（方向 [debugDir]，折角在高度的 [debugCorner] 处）
   final double? debugT;
@@ -38,6 +38,9 @@ class PageCurl extends StatefulWidget {
 
   /// 覆盖翻页：往后翻时当前页水平滑出、露出下一页，不卷页。
   final bool cover;
+
+  /// 宽屏双页：以屏幕正中竖轴（左右两页之间的书脊）为轴翻页。
+  final bool dual;
 
   final int pageCount;
 
@@ -182,7 +185,7 @@ class _PageCurlState extends State<PageCurl> with SingleTickerProviderStateMixin
       final y = _startY / _size.height;
       _cornerY = y < 0.33 ? 0 : (y > 0.67 ? _size.height : _startY);
     }
-    final p = (dx.abs() / (_size.width * 0.85)).clamp(0.0, 1.0);
+    final p = (dx.abs() / (_size.width * (widget.dual ? 0.5 : 0.85))).clamp(0.0, 1.0);
     setState(() {
       _dy = d.localPosition.dy - _startY;
       _t = _dir == 1 ? (dx < 0 ? p : 0.0001) : (dx > 0 ? 1 - p : 0.9999);
@@ -219,8 +222,8 @@ class _PageCurlState extends State<PageCurl> with SingleTickerProviderStateMixin
         Widget body;
         if (_dir == 0 || widget.pageCount == 0) {
           body = widget.pageCount == 0 ? ColoredBox(color: bg) : page(_index, true);
-        } else if (_dir == -1 || widget.cover) {
-          // 往回翻：上一页从左边滑进来盖住当前页；覆盖模式往后翻：当前页向左滑出，露出下一页
+        } else if (!widget.dual && (_dir == -1 || widget.cover)) {
+          // 单页模式下往回翻：上一页从左边滑进来盖住当前页；覆盖模式往后翻：当前页向左滑出，露出下一页
           final dx = -_size.width * _t;
           final (below, above) = _dir == -1 ? (_index, _index - 1) : (_index + 1, _index);
           body = Stack(
@@ -239,8 +242,17 @@ class _PageCurlState extends State<PageCurl> with SingleTickerProviderStateMixin
         } else {
           final turning = _dir == 1 ? _index : _index - 1;
           final under = _dir == 1 ? _index + 1 : _index;
-          final fold = _Fold.at(size: _size, t: _t, cornerY: _cornerY, dy: _dy);
+          // 宽屏双页：以中轴线（x = width / 2）为书脊翻页；覆盖模式下折线保持竖直，仿真模式下带卷角弧度
+          final fold = _Fold.at(
+            size: _size,
+            t: _t,
+            cornerY: widget.dual && widget.cover ? _size.height / 2 : _cornerY,
+            dy: widget.dual && widget.cover ? 0 : _dy,
+            dual: widget.dual,
+          );
           final dark = ThemeData.estimateBrightnessForColor(bg) == Brightness.dark;
+          final spineMirror = Matrix4(-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, _size.width, 0, 0, 1);
+          final shade = widget.dual ? math.sin(math.pi * _t.clamp(0.0, 1.0)) : 1.0;
           body = Stack(
             fit: StackFit.expand,
             children: [
@@ -254,9 +266,16 @@ class _PageCurlState extends State<PageCurl> with SingleTickerProviderStateMixin
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      Transform(transform: fold.mirror, child: page(turning, false)),
-                      // 纸背：比正面暗一点、透出一点字迹
-                      ColoredBox(color: Color.lerp(bg, dark ? Colors.black : const Color(0xFFEDE6D6), dark ? 0.35 : 0.55)!.withValues(alpha: 0.78)),
+                      if (widget.dual) ...[
+                        // 双页模式下，右页背面就是下一屏的左页：先沿中轴线镜像到右半屏，再随折线镜像回左半屏（两次镜像合成刚体旋转平移）
+                        Transform(transform: fold.mirror.multiplied(spineMirror), child: page(under, false)),
+                        if (shade > 0.01)
+                          ColoredBox(color: Colors.black.withValues(alpha: (dark ? 0.16 : 0.08) * shade)),
+                      ] else ...[
+                        Transform(transform: fold.mirror, child: page(turning, false)),
+                        // 纸背：比正面暗一点、透出一点字迹
+                        ColoredBox(color: Color.lerp(bg, dark ? Colors.black : const Color(0xFFEDE6D6), dark ? 0.35 : 0.55)!.withValues(alpha: 0.78)),
+                      ],
                       CustomPaint(painter: _FlapShade(fold, dark)),
                     ],
                   ),
@@ -300,14 +319,24 @@ class _Fold {
   /// 把页面镜像到 [flap] 位置的变换
   final Matrix4 mirror;
 
-  factory _Fold.at({required Size size, required double t, required double cornerY, required double dy}) {
+  factory _Fold.at({required Size size, required double t, required double cornerY, required double dy, bool dual = false}) {
     final w = size.width, h = size.height;
     final corner = Offset(w, cornerY);
-    // 手指（页角）位置：从 C 沿一条向页面中部略微上抬的弧线运动到左边之外
     final towardCenter = (h / 2 - cornerY).sign;
-    final lift = towardCenter * h * 0.26 * math.sin(math.pi * t);
+    final lift = towardCenter * h * (dual ? 0.18 : 0.26) * math.sin(math.pi * t);
     final follow = dy * 0.35 * (1 - t);
-    final touch = Offset(w + (-1.15 * w - w) * t, (cornerY + lift + follow).clamp(0.0, h));
+    final Offset touch;
+    if (dual) {
+      // 双页模式：右页外沿从 x = w 翻到左页外沿 x = 0，折线最终落在正中书脊 x = w / 2；
+      // 限制纵向抬起幅度使整条折线始终位于中轴线右侧（x >= w / 2），贴近书脊时自然展平。
+      final xT = (w * (1 - t)).clamp(0.0, w);
+      final maxDy = h > 0 ? xT * (w - xT) / (2 * h) : 0.0;
+      final rawY = (cornerY + lift + follow).clamp(0.0, h);
+      touch = Offset(xT, cornerY + (rawY - cornerY).clamp(-maxDy, maxDy));
+    } else {
+      // 单页模式：手指（页角）从 C 沿一条向页面中部略微上抬的弧线运动到左边之外
+      touch = Offset(w + (-1.15 * w - w) * t, (cornerY + lift + follow).clamp(0.0, h));
+    }
     final diff = corner - touch;
     final len = diff.distance;
     final rect = [Offset.zero, Offset(w, 0), Offset(w, h), Offset(0, h)];
@@ -315,7 +344,8 @@ class _Fold {
 
     final n = diff / len;
     final m = (corner + touch) / 2;
-    final back = _clip(rect, m, n, true);
+    final rightRect = dual ? [Offset(w / 2, 0), Offset(w, 0), Offset(w, h), Offset(w / 2, h)] : rect;
+    final back = _clip(rightRect, m, n, true);
     final front = _clip(rect, m, n, false);
     final flap = [for (final p in back) p - n * (2 * ((p - m).dx * n.dx + (p - m).dy * n.dy))];
     final d = m.dx * n.dx + m.dy * n.dy;

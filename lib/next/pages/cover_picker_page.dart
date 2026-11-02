@@ -40,18 +40,19 @@ class _PickerPageState extends ConsumerState<_PickerPage> {
   late Future<List<String>> _images = _load();
   late Future<BgmSeries?> _bgm = ref.read(bangumiProvider).series(widget.aid);
 
-  /// 插图章节缓存过就直接用，没缓存就联网取一次并存下；受限书取不到插图，只能从 Bangumi 挑
+  /// 插图章节缓存过就直接用（若缓存里没有图则重新联网取），没缓存就联网取一次并存下；受限书取不到插图，只能从 Bangumi 挑
   Future<List<String>> _load() async {
     final cid = widget.vol.illus;
     if (cid == null) return const [];
     var content = await ChapterCache.get(widget.aid, cid);
+    if (content != null && content.images.isEmpty) content = null;
     if (content == null) {
       try {
         content = await ref.read(apiProvider).chapter(widget.aid, cid);
       } on ChapterLockedException {
         return const [];
       }
-      await ChapterCache.put(widget.aid, cid, content);
+      if (content.images.isNotEmpty) await ChapterCache.put(widget.aid, cid, content);
     }
     return content.images;
   }

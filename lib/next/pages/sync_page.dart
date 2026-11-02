@@ -3,10 +3,12 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../app_prefs.dart';
 import '../sync.dart';
 import '../widgets.dart';
 import '../x_list.dart';
@@ -26,6 +28,7 @@ class _SyncPageState extends ConsumerState<SyncPage> {
   final _folder = TextEditingController(text: Sync.folder);
   String? _note;
   bool _busy = false;
+  bool _showPass = false;
 
   @override
   void initState() {
@@ -75,6 +78,7 @@ class _SyncPageState extends ConsumerState<SyncPage> {
       if (picked == null) return;
       final merged = await Sync.importBackup(utf8.decode(await File(picked.path!).readAsBytes()));
       if (!mounted) return;
+      if (merged) ref.read(syncProvider.notifier).refreshProviders();
       setState(() => _note = merged ? '已导入备份' : '这是本机导出的备份，不需要导入');
     } catch (e) {
       if (mounted) setState(() => _note = '导入失败：$e');
@@ -84,6 +88,8 @@ class _SyncPageState extends ConsumerState<SyncPage> {
   @override
   Widget build(BuildContext context) {
     final status = ref.watch(syncProvider);
+    ref.watch(appPrefsProvider);
+    final prefs = ref.read(appPrefsProvider.notifier);
     final scheme = Theme.of(context).colorScheme;
     final last = Sync.lastSync;
     final busy = _busy || status.busy;
@@ -115,7 +121,43 @@ class _SyncPageState extends ConsumerState<SyncPage> {
     );
     Widget field(TextEditingController c, String label, IconData icon, {String? helper, bool secret = false, TextInputType? type}) => Padding(
       padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
-      child: TextField(controller: c, obscureText: secret, autocorrect: false, keyboardType: type, decoration: InputDecoration(labelText: label, helperText: helper, helperMaxLines: 2, prefixIcon: Icon(icon, size: 20))),
+      child: TextField(
+        controller: c,
+        obscureText: secret && !_showPass,
+        enableInteractiveSelection: true,
+        autocorrect: false,
+        keyboardType: type,
+        decoration: InputDecoration(
+          labelText: label,
+          helperText: helper,
+          helperMaxLines: 2,
+          prefixIcon: Icon(icon, size: 20),
+          suffixIcon: secret
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      tooltip: '粘贴',
+                      icon: const Icon(Icons.content_paste_outlined, size: 19),
+                      onPressed: () async {
+                        final data = await Clipboard.getData(Clipboard.kTextPlain);
+                        final t = data?.text?.trim();
+                        if (t != null && t.isNotEmpty) {
+                          c.text = t;
+                          c.selection = TextSelection.collapsed(offset: t.length);
+                        }
+                      },
+                    ),
+                    IconButton(
+                      tooltip: _showPass ? '隐藏密码' : '显示密码',
+                      icon: Icon(_showPass ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 19),
+                      onPressed: () => setState(() => _showPass = !_showPass),
+                    ),
+                  ],
+                )
+              : null,
+        ),
+      ),
     );
     return Scaffold(
       appBar: AppBar(title: const Text('同步')),
@@ -150,11 +192,38 @@ class _SyncPageState extends ConsumerState<SyncPage> {
             ),
           ),
           const XDivider(),
+          const XGroupTitle('可选同步项'),
+          XSwitch(
+            title: '同步自定义头像',
+            subtitle: '在各设备间同步个人页自选的头像图片',
+            value: prefs.get(P.syncAvatar, true),
+            onChanged: (v) => prefs.set(P.syncAvatar, v),
+          ),
+          XSwitch(
+            title: '同步书架与更新偏好',
+            subtitle: '同步书架排序、筛选显示及自动更新条件（不含横竖屏列数）',
+            value: prefs.get(P.syncShelfPrefs, false),
+            onChanged: (v) => prefs.set(P.syncShelfPrefs, v),
+          ),
+          XSwitch(
+            title: '同步阅读器设置',
+            subtitle: '同步字号、行距、边距、翻页方式等阅读排版习惯',
+            value: prefs.get(P.syncReaderPrefs, false),
+            onChanged: (v) => prefs.set(P.syncReaderPrefs, v),
+          ),
+          XSwitch(
+            title: '同步外观与主题',
+            subtitle: '同步深浅色模式、配色方案（手机与电脑想用不同主题时请关闭）',
+            value: prefs.get(P.syncAppearance, false),
+            onChanged: (v) => prefs.set(P.syncAppearance, v),
+          ),
+          const XDivider(),
           const XGroupTitle('手动备份'),
           XTile(leading: const XLeading(icon: Icons.upload_outlined), title: '导出同步数据', onTap: _export),
           XTile(leading: const XLeading(icon: Icons.download_outlined), title: '导入同步数据', subtitle: '合并到本机，不覆盖', onTap: _import),
           const XDivider(),
           const XGroupTitle('说明'),
+          const XNote('默认始终同步：书架书籍与重命名、自建分类（如「在追」）及分组归属、手动挑选与裁剪过的卷封面、更新列表与基准、阅读进度、已读章节、书签、历史、替换规则、笔记与阅读统计。'),
         ],
       )),
     );

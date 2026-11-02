@@ -27,6 +27,7 @@ class AppPrefs extends Notifier<int> {
 
   void set(String key, Object? value) {
     _box.put('p.$key', value);
+    _box.put('sync:prefsTs', DateTime.now().millisecondsSinceEpoch);
     state++;
   }
 }
@@ -87,4 +88,10 @@ class P {
   static const lock = 'sec.lock'; // bool 生物识别锁
   static const lockAfter = 'sec.lockAfter'; // int 分钟，0 立即
   static const secure = 'sec.secure'; // int 0 关 1 始终 2 仅无痕时
+
+  // 同步可选项（核心数据始终同步；这些设备习惯项由用户自选是否跨设备同步）
+  static const syncAvatar = 'sync.avatar'; // bool 同步自定义头像（默认开）
+  static const syncShelfPrefs = 'sync.shelfPrefs'; // bool 同步书架与更新偏好（默认关）
+  static const syncReaderPrefs = 'sync.readerPrefs'; // bool 同步阅读器排版设置（默认关）
+  static const syncAppearance = 'sync.appearance'; // bool 同步外观与主题（默认关）
 }

@@ -856,6 +856,7 @@ class _PagedBodyState extends State<PagedBody> {
             key: ValueKey(sig),
             controller: _curl,
             cover: widget.cover,
+            dual: cols == 2,
             pageCount: _units,
             initialIndex: _page,
             background: widget.background,

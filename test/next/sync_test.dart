@@ -207,4 +207,54 @@ void main() {
     await expectLater(Sync.run(), throwsA(contains('应用密码')));
     await server.close(force: true);
   });
+
+  test('书架分类（含同名分类合并）、书籍改名、裁剪封面、更新列表与可选设置同步', () async {
+    await box.put('lib:cats', [
+      {'id': 'c_local', 'name': '在追', 'ts': 100},
+    ]);
+    await box.put('lib:books', {
+      '1': {'aid': '1', 'title': '原名', 'img': 'i1', 'added': 100, 'cats': <String>[], 'bid': 'b1', 'done': false, 'name': null, 'ts': 100},
+    });
+    await box.put('vcover2:1', {'第一卷': 'https://example.com/auto.jpg'});
+
+    await Sync.merge(remote(extra: {
+      'cats': [
+        {'id': 'c_remote', 'name': '在追', 'ts': 200},
+        {'id': 'c_new', 'name': '養肥', 'ts': 200},
+      ],
+      'books': {
+        '1': {'aid': '1', 'title': '原名', 'img': 'i1', 'added': 100, 'cats': ['c_remote'], 'bid': 'b2', 'done': true, 'name': '自定义译名', 'ts': 300},
+      },
+      'vcover': {
+        '1': {'第一卷': 'https://example.com/manual.jpg#crop=0.5,0,0.5,1'},
+      },
+      'vpick': {
+        '1': ['第一卷'],
+      },
+      'updates': {
+        'feed': [
+          {'aid': '1', 'title': '原名', 'img': 'i1', 'chapter': '新章节', 'cid': 'c9', 'time': 500},
+        ],
+        'known': {'1': 15},
+        'seen': 400,
+        'at': {'1': 500},
+      },
+      'appearance': {
+        'ts': 999,
+        'themeMode': 2,
+        'palette': 3,
+      },
+    }));
+
+    final cats = (box.get('lib:cats') as List).cast<Map>();
+    expect(cats.map((c) => c['name']), ['在追', '養肥']); // 同名"在追"不重复建
+    final b1 = (box.get('lib:books') as Map)['1'] as Map;
+    expect(b1['name'], '自定义译名');
+    expect(b1['cats'], ['c_local']); // 远端 c_remote 自动映射到本机同名的 c_local
+    expect(b1['bid'], 'b1'); // 本机 bid 保留
+    expect(Volumes.cover('1', '第一卷'), 'https://example.com/manual.jpg#crop=0.5,0,0.5,1'); // 手动裁剪封面覆盖自动封面
+    expect((box.get('updates') as List).length, 1);
+    expect((box.get('updates:known') as Map)['1'], 15);
+    expect(box.get('themeMode'), isNull); // 默认不同步外观与主题
+  });
 }

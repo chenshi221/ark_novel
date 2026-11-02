@@ -13,7 +13,7 @@ class ThemeModeController extends Notifier<ThemeMode> {
   ThemeMode build() => ThemeMode.values[(_box.get('themeMode') as int?) ?? 0];
 
   void set(ThemeMode mode) {
-    _box.put('themeMode', mode.index);
+    _box.putAll({'themeMode': mode.index, 'sync:appearanceTs': DateTime.now().millisecondsSinceEpoch});
     state = mode;
   }
 }
@@ -26,7 +26,7 @@ class PaletteController extends Notifier<int> {
   int build() => (_box.get('palette') as int?) ?? 7;
 
   void set(int index) {
-    _box.put('palette', index);
+    _box.putAll({'palette': index, 'sync:appearanceTs': DateTime.now().millisecondsSinceEpoch});
     state = index;
   }
 }
@@ -214,7 +214,7 @@ class ReaderPrefsController extends Notifier<ReaderPrefs> {
   );
 
   void update(ReaderPrefs next) {
-    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin, 'r.font': next.font, 'r.ttsPitch': next.ttsPitch, 'r.ttsVoice': next.ttsVoice, 'r.ttsHighlight': next.ttsHighlight, 'r.ttsAutoNext': next.ttsAutoNext, 'r.dual': next.dual, 'r.dim': next.dim, 'r.volumeKeys': next.volumeKeys, 'r.tapZone': next.tapZone, 'r.tapInvert': next.tapInvert, 'r.keepScreenOn': next.keepScreenOn, 'r.fullscreen': next.fullscreen, 'r.showStatus': next.showStatus, 'r.skipRead': next.skipRead, 'r.chapterToast': next.chapterToast, 'r.warm': next.warm, 'r.grayscale': next.grayscale, 'r.invert': next.invert, 'r.customBrightness': next.customBrightness, 'r.brightness': next.brightness, 'r.volumeInvert': next.volumeInvert, 'r.pageAnim': next.pageAnim, 'r.prefetch': next.prefetch, 'r.prefetchWifi': next.prefetchWifi});
+    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin, 'r.font': next.font, 'r.ttsPitch': next.ttsPitch, 'r.ttsVoice': next.ttsVoice, 'r.ttsHighlight': next.ttsHighlight, 'r.ttsAutoNext': next.ttsAutoNext, 'r.dual': next.dual, 'r.dim': next.dim, 'r.volumeKeys': next.volumeKeys, 'r.tapZone': next.tapZone, 'r.tapInvert': next.tapInvert, 'r.keepScreenOn': next.keepScreenOn, 'r.fullscreen': next.fullscreen, 'r.showStatus': next.showStatus, 'r.skipRead': next.skipRead, 'r.chapterToast': next.chapterToast, 'r.warm': next.warm, 'r.grayscale': next.grayscale, 'r.invert': next.invert, 'r.customBrightness': next.customBrightness, 'r.brightness': next.brightness, 'r.volumeInvert': next.volumeInvert, 'r.pageAnim': next.pageAnim, 'r.prefetch': next.prefetch, 'r.prefetchWifi': next.prefetchWifi, 'sync:readerTs': DateTime.now().millisecondsSinceEpoch});
     state = next;
   }
 }

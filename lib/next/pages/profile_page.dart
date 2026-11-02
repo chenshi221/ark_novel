@@ -36,12 +36,13 @@ class _AvatarController extends Notifier<String?> {
     if (await dir.exists()) await dir.delete(recursive: true);
     await dir.create(recursive: true);
     final dest = await File(src).copy(p.join(dir.path, 'avatar_${DateTime.now().millisecondsSinceEpoch}${p.extension(src)}'));
-    await Hive.box('session').put('avatar', dest.path);
+    await Hive.box('session').putAll({'avatar': dest.path, 'avatar:ts': DateTime.now().millisecondsSinceEpoch});
     state = dest.path;
   }
 
   Future<void> clear() async {
     await Hive.box('session').delete('avatar');
+    await Hive.box('session').put('avatar:ts', DateTime.now().millisecondsSinceEpoch);
     state = null;
   }
 }

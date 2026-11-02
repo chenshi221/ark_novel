@@ -47,16 +47,25 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
 
   StatefulNavigationShell get shell => widget.shell;
 
+  void _onSyncChanged() {
+    if (!mounted) return;
+    ref.read(syncProvider.notifier).refreshProviders();
+  }
+
   @override
   void initState() {
     super.initState();
     // 打开时强制检查一次更新，之后应用在前台时每小时一次（进了后台 Dart 定时器基本不会触发）
     WidgetsBinding.instance.addObserver(this);
+    Sync.changes.addListener(_onSyncChanged);
     Future.microtask(_syncAndCheck);
     Sync.auto();
     // 清缓存、压图这些不急的活等主界面稳定了再做，不和第一屏抢 CPU 和磁盘
     _maintenance = Timer(const Duration(seconds: 6), _tidy);
-    _timer = Timer.periodic(const Duration(hours: 1), (_) => _checkUpdates());
+    _timer = Timer.periodic(const Duration(hours: 1), (_) {
+      _checkUpdates();
+      Sync.auto();
+    });
     if (ReadingWidget.supported) {
       _widgetWatch = Hive.box('session').listenable(keys: ['history2', 'updates', 'updates:seen'])..addListener(_scheduleWidget);
       Volumes.changes.addListener(_scheduleWidget); // 封面取到了、换了
@@ -111,6 +120,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    Sync.changes.removeListener(_onSyncChanged);
     _timer?.cancel();
     _maintenance?.cancel();
     _widgetTimer?.cancel();
@@ -122,8 +132,8 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 进后台时把 cookie jar 里服务端续期过的 cookie 写回本地
-    if (state == AppLifecycleState.paused) {
+    // 进后台或桌面端切走窗口时把 cookie jar 里服务端续期过的 cookie 写回本地并触发同步
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       ref.read(sessionProvider.notifier).persistCookies();
       Sync.auto();
       if (ReadingWidget.supported) _pushWidget();
@@ -237,6 +247,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
             NavigationRail(
               selectedIndex: shell.currentIndex,
               onDestinationSelected: _go,
+              groupAlignment: 0.0,
               labelType: NavigationRailLabelType.all,
               backgroundColor: Theme.of(context).colorScheme.surface,
               indicatorColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.14),
