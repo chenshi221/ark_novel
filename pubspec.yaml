@@ -90,6 +90,7 @@ flutter:
   assets:
     - assets/images/
     - assets/theme/
+    - assets/licenses/
 
   fonts:
     - family: LXGWWenKai

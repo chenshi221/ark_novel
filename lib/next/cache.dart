@@ -29,6 +29,15 @@ class ChapterCache {
   static final _counts = <String, int>{};
   static final _charsOf = <String, int>{};
 
+  /// 删除次数：整本删一次 [_bookGen] 加一，删某几章时这几章各自的 [_chapterGen] 加一。
+  /// 联网取正文前先记下 [ticket]，取回来写缓存时对不上就说明这期间被删过，不再写回去
+  /// （否则「删掉缓存」之后，正在下载 / 预取的章节过几秒又出现了）。只在内存里，重启后从头算。
+  static final _bookGen = <String, int>{};
+  static final _chapterGen = <String, int>{};
+
+  /// 写缓存的凭证：联网之前取，传给 [put] 的 `ticket`。
+  static (int, int) ticket(String aid, String cid) => (_bookGen[aid] ?? 0, _chapterGen['$aid:$cid'] ?? 0);
+
   static void _tally(String aid, int n, int chars) {
     _counts[aid] = (_counts[aid] ?? 0) + n;
     _charsOf[aid] = (_charsOf[aid] ?? 0) + chars;
@@ -74,11 +83,14 @@ class ChapterCache {
   // 中文正文 gzip 后一般不到原来的一半；网页预览没有 gzip，照旧存原文
   static Map<String, Object> _pack(String text, List<String> images) => kIsWeb ? {'t': text, 'i': images} : {'z': Uint8List.fromList(gzip.encode(utf8.encode(text))), 'i': images};
 
-  static Future<void> put(String aid, String cid, Content c) async {
+  /// 写入一章。给了 [ticket] 且这期间这章（或整本）被删过时不写，返回 false。
+  static Future<bool> put(String aid, String cid, Content c, {(int, int)? ticket}) async {
+    if (ticket != null && ticket != ChapterCache.ticket(aid, cid)) return false;
     await _text.put('$aid:$cid', _pack(c.text, c.images));
     final old = _index.get('$aid:$cid') as int?;
     _tally(aid, old == null ? 1 : 0, c.text.length - (old ?? 0));
     await _index.put('$aid:$cid', c.text.length);
+    return true;
   }
 
   /// 旧版本存的原文在后台压一遍（只做一次），一章一章来；做完整理一下文件，空出来的地方才真正还给系统。
@@ -128,6 +140,7 @@ class ChapterCache {
   };
 
   static Future<void> remove(String aid, {bool compact = true}) async {
+    _bookGen[aid] = (_bookGen[aid] ?? 0) + 1;
     final keys = [..._keys(aid), 'meta:$aid', 'oimg|$aid'];
     await _text.deleteAll(keys);
     await _index.deleteAll(keys);
@@ -137,6 +150,9 @@ class ChapterCache {
   }
 
   static Future<void> removeChapters(String aid, Iterable<String> cids, {bool compact = true}) async {
+    for (final c in cids) {
+      _chapterGen['$aid:$c'] = (_chapterGen['$aid:$c'] ?? 0) + 1;
+    }
     final keys = [for (final c in cids) '$aid:$c'].where(_index.containsKey).toList();
     _tally(aid, -keys.length, -_chars(keys));
     await _text.deleteAll(keys);
@@ -281,6 +297,7 @@ class DownloadController extends Notifier<Map<String, DownloadState>> {
       for (final c in chapters) {
         if (_cancelled.contains(aid)) break;
         if (ChapterCache.has(aid, c.cid)) continue;
+        final ticket = ChapterCache.ticket(aid, c.cid);
         final Content content;
         try {
           content = await api.chapter(aid, c.cid);
@@ -289,12 +306,18 @@ class DownloadController extends Notifier<Map<String, DownloadState>> {
         }
         // 请求期间可能已经暂停或删除了缓存：此时不能再写回去
         if (_cancelled.contains(aid)) break;
-        await ChapterCache.put(aid, c.cid, content);
+        // 写不进去：整本被删了就停；只是这一章被删了（比如「清掉已读章节」）就跳过它接着下
+        if (!await ChapterCache.put(aid, c.cid, content, ticket: ticket)) {
+          if (ChapterCache.ticket(aid, c.cid).$1 != ticket.$1) break;
+          continue;
+        }
         for (final url in content.images) {
           try {
             await images.load(url);
           } catch (_) {}
         }
+        // 下插图这段时间缓存可能被删了：不再记插图（删除时已经把这条记录清掉了）
+        if (ChapterCache.ticket(aid, c.cid).$1 != ticket.$1) break;
         await ChapterCache.addOfflineImages(aid, content.images);
         emit();
         await Future<void>.delayed(const Duration(milliseconds: 400));

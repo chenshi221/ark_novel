@@ -634,5 +634,10 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
         onTap: AppPrefs.unlockEntry ? null : _tapVersion,
       ),
     ),
+    XTile(
+      title: '开源许可',
+      subtitle: '用到的开源库和内置字体（霞鹜文楷、思源宋体）的许可',
+      onTap: () => showLicensePage(context: context, applicationName: 'Ark Novel'),
+    ),
   ];
 }
