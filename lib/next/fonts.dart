@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:flutter/services.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:path/path.dart' as p;
@@ -18,13 +19,23 @@ class FontStore {
   static String? get customFamily => _box.get('font:family') as String?;
 
   /// 启动时把上次选的字体文件重新加载进引擎。
+  /// 不挡着启动（字体文件可能有十几 MB），在后台加载；阅读页用自选字体时等 [ready] 变成 true 再排版。
   static Future<void> loadSaved() async {
-    final path = _box.get('font:path') as String?;
-    final family = customFamily;
-    if (path == null || family == null) return;
-    final file = File(path);
-    if (await file.exists()) await _load(family, await file.readAsBytes());
+    try {
+      final path = _box.get('font:path') as String?;
+      final family = customFamily;
+      if (path == null || family == null) return;
+      final file = File(path);
+      if (await file.exists()) await _load(family, await file.readAsBytes());
+    } catch (_) {
+      // 字体文件坏了就按系统字体显示
+    } finally {
+      ready.value = true;
+    }
   }
+
+  /// 上次选的字体加载完了（或者没有要加载的）
+  static final ready = ValueNotifier<bool>(false);
 
   static Future<void> _load(String family, Uint8List bytes) async {
     final loader = FontLoader(family)..addFont(Future.value(ByteData.view(bytes.buffer)));

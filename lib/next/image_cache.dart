@@ -34,6 +34,7 @@ class ImageStore {
   static const _maxNet = 4;
   int _running = 0;
   final _waiting = <String, Completer<void>>{}; // Map 保持插入顺序
+  final _pinned = <String>{}; // 预取的（[prefetch]），页面一闪而过也不取消
   Directory? _dir;
 
   Future<Directory> _cacheDir() async => _dir ??= await Directory(p.join((await getApplicationSupportDirectory()).path, 'imgcache')).create(recursive: true);
@@ -80,7 +81,10 @@ class ImageStore {
     final hit = _hit(url);
     if (hit != null) return Future.value(hit);
     final running = _inflight[url];
-    if (running != null) return running;
+    if (running != null) {
+      _bump(url);
+      return running;
+    }
     late final Future<Uint8List> f;
     // 只删自己：被取消后又重新请求时，这里已经换成新的那次了
     f = _fetch(url).whenComplete(() { if (identical(_inflight[url], f)) _inflight.remove(url); });
@@ -92,6 +96,28 @@ class ImageStore {
     final url = _norm(rawUrl);
     final f = File(p.join((await _cacheDir()).path, _name(url)));
     return peek(url) ?? (await f.exists() ? await f.readAsBytes() : null);
+  }
+
+  /// 预取一整章的插图：按顺序排进下载队列，一次排好，不用翻到哪页才去取哪张。
+  /// 翻页快、页面一闪而过时也不取消（见 [cancel]）；正要看的那张会插到队首（见 [_bump]）。
+  void prefetch(Iterable<String> urls) {
+    for (final raw in urls) {
+      final url = _norm(raw);
+      if (raw.isEmpty || _mem.containsKey(url) || _inflight.containsKey(url)) continue;
+      _pinned.add(url);
+      _load(url).whenComplete(() => _pinned.remove(url)).ignore(); // 只下载，放大清晰度等真要显示时再说
+    }
+  }
+
+  /// 还在排队的图有人要看了：挪到队首，下一个空出来的名额先给它。
+  void _bump(String url) {
+    final c = _waiting.remove(url);
+    if (c == null) return;
+    final rest = {..._waiting};
+    _waiting
+      ..clear()
+      ..[url] = c
+      ..addAll(rest);
   }
 
   /// 本地缓存文件的路径（没缓存就先下载）：给通知栏封面这种只认文件的地方用
@@ -120,6 +146,7 @@ class ImageStore {
   /// 不再需要这张图（滑出屏幕、页面关了）：还在排队的就不下了。已经在下的照常下完存起来。
   void cancel(String rawUrl) {
     final url = _norm(rawUrl);
+    if (_pinned.contains(url)) return;
     final c = _waiting.remove(url);
     if (c == null) return;
     _inflight.remove(url); // 马上又滑回来时重新排队，别拿到这个被取消的结果

@@ -196,8 +196,18 @@ class SessionController extends Notifier<SessionState> {
   @override
   SessionState build() {
     Future.microtask(restore);
-    return const SessionChecking();
+    // 本地就能定下来的直接给，第一帧就进主界面，不在启动页停：没登录 → 游客；有上次的账号信息 → 先当已登录，确认在后台做。
+    // 只有存了 cookie 却没有账号信息（刚登录完就被杀掉）时才在启动页等确认
+    final html = _store.userHtml;
+    if (_store.cookie == null) return const SessionLoggedOut();
+    return html != null ? SessionLoggedIn(Wenku8Parser.userInfo(html)) : const SessionChecking();
   }
+
+  final _cookiesReady = Completer<void>();
+  bool _startup = true;
+
+  /// 保存的 cookie 放进请求用的 cookie jar 以后才完成。启动后第一批联网请求（同步书架等）要先等它，否则不带登录状态。
+  Future<void> get ready => _cookiesReady.future;
 
   SessionStore get _store => ref.read(sessionStoreProvider);
 
@@ -236,14 +246,17 @@ class SessionController extends Notifier<SessionState> {
   /// 有上次保存的账号信息就先当已登录，直接进主界面，确认在后台做，不在启动页干等。
   Future<void> restore() async {
     await _restoreCookies();
+    if (!_cookiesReady.isCompleted) _cookiesReady.complete();
+    final startup = _startup;
+    _startup = false;
     final cookie = _store.cookie;
     if (cookie == null) {
       state = const SessionLoggedOut();
       return;
     }
-    final html = _store.userHtml;
-    // 只在刚启动时这样：验证完重新确认（afterVerify）仍走"检查中"，确认后主界面才会重新同步书架
-    state = html != null && state is SessionChecking ? SessionLoggedIn(Wenku8Parser.userInfo(html)) : const SessionChecking();
+    // 刚启动时 build 已经按上次的账号信息进了主界面，别再切回"检查中"；
+    // 验证完重新确认（afterVerify）仍走"检查中"，确认后主界面才会重新同步书架
+    if (!(startup && state is SessionLoggedIn)) state = const SessionChecking();
     try {
       state = SessionLoggedIn(await _fetchUser().timeout(const Duration(seconds: 6)));
     } on Wenku8UnexpectedPageException {

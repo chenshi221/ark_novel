@@ -272,6 +272,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     _clock = Timer.periodic(const Duration(minutes: 1), (_) => _tick());
     _initial = widget.offset;
     _doneAtOpen = Volumes.done(widget.aid).keys.toSet();
+    FontStore.ready.addListener(_onFontReady);
     WidgetsBinding.instance.addObserver(this);
     _applyChrome(ref.read(readerPrefsProvider));
     _tts.setCompletionHandler(() {
@@ -281,8 +282,13 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     });
   }
 
+  void _onFontReady() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    FontStore.ready.removeListener(_onFontReady);
     _screen.invokeMethod('setBrightness', {'value': -1.0}).ignore();
     _syncVolumeKeys(false);
     _vol.setMethodCallHandler(null);
@@ -759,6 +765,11 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     final next = _nextIn(chapters, index, prefs);
     _nextChapter = next;
     final content = ref.watch(chapterProvider((widget.aid, _cid)));
+    // 插图章：一加载好就把整章的图排进下载队列，翻页时不用一张一张现取（网页预览不走图片缓存）
+    final images = content.value?.images ?? const <String>[];
+    if (images.isNotEmpty && !isWebPreview && _imagesQueued.add(_cid)) {
+      Future.microtask(() => ref.read(imageStoreProvider).prefetch(images));
+    }
     // 章节一加载好就预加载后面几章（用 read 触发，且每章只触发一次）
     if (index >= 0 && content.hasValue) {
       for (final ahead in chapters.skip(index + 1).take(prefs.prefetch)) {
@@ -791,6 +802,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
             loading: () => Center(child: CircularProgressIndicator(color: palette.fg)),
             error: (e, _) => StatePanel(title: '章节加载失败', detail: e.toString(), error: e, onRetry: () => ref.invalidate(chapterProvider((widget.aid, _cid)))),
             data: (c) {
+              // 自选字体还在后台加载（刚启动就从小组件直接进来时）：等它好了再排版，不然分页按别的字体算
+              if (prefs.font == 2 && !FontStore.ready.value) return Center(child: CircularProgressIndicator(color: palette.fg));
               if (_shown != (_cid, _epoch)) {
                 // 这一章第一次显示：起点取书签 / 保存的进度，之后 _offset 随翻页更新
                 _shown = (_cid, _epoch);
@@ -1061,6 +1074,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   }
 
   final _preloaded = <String>{};
+  final _imagesQueued = <String>{}; // 已经把插图排进下载队列的章节
 
   /// 目录（按卷分层，当前章所在的卷默认展开）、本书的书签、人物备注。
   void _showCatalogue(List<CatVolume> volumes, String current) {

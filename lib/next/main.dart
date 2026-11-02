@@ -16,8 +16,9 @@ Future<void> main() async {
   // 解码好的封面多留一些（默认 100 MB），滑回去不用重新解码
   PaintingBinding.instance.imageCache.maximumSizeBytes = 200 << 20;
   final store = await SessionStore.open();
+  // 字体在后台加载，不挡着第一帧（阅读页用自选字体时会等它，见 FontStore.ready）
+  FontStore.loadSaved().ignore();
   await ChapterCache.open();
-  await FontStore.loadSaved();
   applyOrientation(OrientationController.saved);
   // 不用 Riverpod 默认的自动重试：失败的请求自己重复十次只会加快被 Cloudflare 限流
   runApp(ProviderScope(retry: (_, _) => null, overrides: [sessionStoreProvider.overrideWithValue(store)], child: const NextApp()));

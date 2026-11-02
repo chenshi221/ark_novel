@@ -54,15 +54,8 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     WidgetsBinding.instance.addObserver(this);
     Future.microtask(_syncAndCheck);
     Sync.auto();
-    // 先清再压，省得压了又删
-    final cleared = AppPrefs.read(P.autoClear, false) ? ChapterCache.clearAuto() : Future.value(0);
-    if (!isWebPreview) {
-      final store = ref.read(imageStoreProvider);
-      // 先删挑封面剩下的图，再压剩下的，省得压了又删
-      store.dropLowQualityOnce().then((_) => store.trim()).then((_) => ref.read(volumeCoverQueueProvider).dropSkippedOnce(ref.read(libraryProvider).books.keys)).then((_) => store.shrinkOld()).then((_) => ref.read(volumeCoverQueueProvider).retrimOnce(ref.read(libraryProvider).books.keys)).ignore();
-      cleared.then((_) => ChapterCache.compressOld()).ignore();
-    }
-    if (isWebPreview) cleared.ignore();
+    // 清缓存、压图这些不急的活等主界面稳定了再做，不和第一屏抢 CPU 和磁盘
+    _maintenance = Timer(const Duration(seconds: 6), _tidy);
     _timer = Timer.periodic(const Duration(hours: 1), (_) => _checkUpdates());
     if (ReadingWidget.supported) {
       _widgetWatch = Hive.box('session').listenable(keys: ['history2', 'updates', 'updates:seen'])..addListener(_scheduleWidget);
@@ -80,6 +73,21 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     }
   }
 
+  Timer? _maintenance;
+
+  void _tidy() {
+    if (!mounted) return;
+    // 先清再压，省得压了又删
+    final cleared = AppPrefs.read(P.autoClear, false) ? ChapterCache.clearAuto() : Future.value(0);
+    if (isWebPreview) return cleared.ignore();
+    final store = ref.read(imageStoreProvider);
+    final covers = ref.read(volumeCoverQueueProvider);
+    final aids = ref.read(libraryProvider).books.keys.toList();
+    // 先删挑封面剩下的图，再压剩下的，省得压了又删
+    store.dropLowQualityOnce().then((_) => store.trim()).then((_) => covers.dropSkippedOnce(aids)).then((_) => store.shrinkOld()).ignore();
+    cleared.then((_) => ChapterCache.compressOld()).ignore();
+  }
+
   void _scheduleWidget() {
     _widgetTimer?.cancel();
     _widgetTimer = Timer(const Duration(seconds: 2), _pushWidget);
@@ -90,9 +98,11 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     ReadingWidget.push(ref.read(volumeCoverQueueProvider), ref.read(imageStoreProvider), appPalettes[ref.read(paletteProvider)], ref.read(themeModeProvider));
   }
 
-  void _openFromWidget(Uri? uri) {
+  Future<void> _openFromWidget(Uri? uri) async {
     final r = ReadingWidget.route(uri);
-    if (r == null || !mounted) return;
+    if (r == null) return;
+    await ref.read(sessionProvider.notifier).ready; // 冷启动时 cookie 可能还没放好
+    if (!mounted) return;
     if (r == Routes.bookshelf) return _go(0);
     if (r == Routes.updates) return _go(2);
     context.push(r);
@@ -102,6 +112,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _maintenance?.cancel();
     _widgetTimer?.cancel();
     _widgetWatch?.removeListener(_scheduleWidget);
     Volumes.changes.removeListener(_scheduleWidget);
@@ -131,6 +142,8 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
 
   /// 先和网站书架同步（可能导入新书），再检查更新。
   Future<void> _syncAndCheck() async {
+    await ref.read(sessionProvider.notifier).ready; // 启动时第一帧就进了主界面，cookie 可能还没放好
+    if (!mounted) return;
     await ref.read(libraryProvider.notifier).sync();
     _checkUpdates();
     if (!isWebPreview) ref.read(volumeCoverQueueProvider).prefetchAll(ref.read(libraryProvider).books.keys);
