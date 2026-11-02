@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
+import 'package:flutter/gestures.dart' show PointerDeviceKind, PointerScrollEvent, PointerSignalEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -449,11 +450,22 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     } else if (key == LogicalKeyboardKey.bracketLeft && prev != null) {
       _go(prev.cid);
     } else if (key == LogicalKeyboardKey.escape) {
-      _toggleBar();
+      _bar ? _toggleBar() : Navigator.of(context).maybePop();
     } else {
       return KeyEventResult.ignored;
     }
     return KeyEventResult.handled;
+  }
+
+  DateTime _lastWheel = DateTime(0);
+
+  /// 分页模式下滚轮翻页。滚一下会连发好几个事件，隔一小段时间才算下一次。
+  void _onWheel(PointerSignalEvent e) {
+    if (_bar || e is! PointerScrollEvent || e.scrollDelta.dy == 0) return;
+    final now = DateTime.now();
+    if (now.difference(_lastWheel) < const Duration(milliseconds: 250)) return;
+    _lastWheel = now;
+    e.scrollDelta.dy > 0 ? _nav.next?.call() : _nav.prev?.call();
   }
 
   void _toggleBar() {
@@ -711,7 +723,11 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     ref.invalidate(chapterProvider);
   }
 
-  Widget _selectable(Widget child) => SelectionArea(onSelectionChanged: (c) => _selected = c?.plainText, contextMenuBuilder: _selectionMenu, child: child);
+  // 正文里鼠标拖动是选字，不滚动不翻页（翻页用滚轮、键盘、点两侧）
+  Widget _selectable(Widget child) => ScrollConfiguration(
+    behavior: ScrollConfiguration.of(context).copyWith(dragDevices: ScrollConfiguration.of(context).dragDevices.difference({PointerDeviceKind.mouse})),
+    child: SelectionArea(onSelectionChanged: (c) => _selected = c?.plainText, contextMenuBuilder: _selectionMenu, child: child),
+  );
 
   /// 点高亮文字：显示并修改备注，也可以换颜色、取消高亮。
   Future<void> _editNote(ReplaceRule rule) async {
@@ -794,7 +810,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     return Focus(
       autofocus: true,
       onKeyEvent: (_, e) => _onKey(e, prev, next, prefs.mode),
-      child: Scaffold(
+      child: Listener(onPointerSignal: prefs.mode == 0 ? null : _onWheel, child: Scaffold(
         resizeToAvoidBottomInset: false, // 键盘盖在上面，不把正文压矮（压矮会重新分页、跳页）
       backgroundColor: palette.bg,
       body: _filtered(prefs, Stack(
@@ -1054,7 +1070,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
           ],
         ],
       )),
-      ),
+      )),
     );
   }
 

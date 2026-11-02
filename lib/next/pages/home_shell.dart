@@ -134,19 +134,22 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
   }
 
   /// 本地书架里有书、而且不是离线状态才检查（游客也能用本地书架追更新）。
-  void _checkUpdates() {
+  Future<void> _checkUpdates() async {
     final s = ref.read(sessionProvider);
     final online = s is SessionLoggedOut || (s is SessionLoggedIn && !s.offline);
-    if (online && ref.read(libraryProvider).books.isNotEmpty) ref.read(updateProvider.notifier).refresh(force: false); // 按设置里的间隔和网络限制
+    if (online && ref.read(libraryProvider).books.isNotEmpty) await ref.read(updateProvider.notifier).refresh(force: false); // 按设置里的间隔和网络限制
   }
 
-  /// 先和网站书架同步（可能导入新书），再检查更新。
+  /// 按顺序来：书架 → 目录（检查更新）→ 卷封面 → 详情。第一次打开要取的东西很多，看得见的先取，详情最后。
   Future<void> _syncAndCheck() async {
     await ref.read(sessionProvider.notifier).ready; // 启动时第一帧就进了主界面，cookie 可能还没放好
     if (!mounted) return;
-    await ref.read(libraryProvider.notifier).sync();
-    _checkUpdates();
-    if (!isWebPreview) ref.read(volumeCoverQueueProvider).prefetchAll(ref.read(libraryProvider).books.keys);
+    final library = ref.read(libraryProvider.notifier);
+    await library.sync(details: false);
+    await _checkUpdates();
+    if (!mounted) return;
+    if (!isWebPreview) await ref.read(volumeCoverQueueProvider).prefetchAll(ref.read(libraryProvider).books.keys);
+    if (mounted) await library.prefetchDetails();
   }
 
   // 最后一项是主题导航图标的序号（图标按含义编号：0 发现 1 书架 2 更新 3 我的）
