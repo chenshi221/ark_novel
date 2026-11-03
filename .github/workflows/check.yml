@@ -40,6 +40,7 @@ jobs:
         run: flutter test
 
   build:
+    name: build (${{ matrix.platform }})
     needs: check
     strategy:
       fail-fast: false
