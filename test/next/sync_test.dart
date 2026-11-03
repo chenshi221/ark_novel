@@ -7,6 +7,7 @@ import 'package:ark_novel/next/bookmarks.dart';
 import 'package:ark_novel/next/rules.dart';
 import 'package:ark_novel/next/stats.dart';
 import 'package:ark_novel/next/sync.dart';
+import 'package:ark_novel/next/volumes.dart';
 
 void main() {
   late Box box;
@@ -120,9 +121,52 @@ void main() {
     expect((box.get('rules') as List).single['ts'], at + 5);
   });
 
+  test('其他设备的统计更新后不会读到旧的解码结果', () async {
+    Map<String, dynamic> stats(int n) => {'stats': {'day': {}, 'book': {}, 'chapters': n, 'meta': {}, 'days': {}}};
+    await Sync.merge(remote(extra: stats(1)));
+    expect(ReadingStats.chapters, 1);
+    await Sync.merge(remote(extra: stats(2)));
+    expect(ReadingStats.chapters, 2);
+  });
+
   test('解析 PROPFIND 返回的文件名', () {
-    const xml = '<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/ArkNovel/</d:href></d:response><d:response><d:href>/dav/ArkNovel/d1%20a.json</d:href></d:response></d:multistatus>';
-    expect(Sync.parseListing(xml), ['d1 a.json']);
+    const xml = '<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/ArkNovel/</d:href></d:response><d:response><d:href>/dav/ArkNovel/sub.json/</d:href></d:response><d:response><d:href>/dav/ArkNovel/d1%20a.json</d:href></d:response><d:response><d:href>/dav/ArkNovel/bad%ZZ.json</d:href></d:response></d:multistatus>';
+    expect(Sync.parseListing(xml), ['d1 a.json', 'bad%ZZ.json']);
+  });
+
+  test('分卷评分、按章统计与读完状态跟随同步更新', () async {
+    await box.put('vols:1', [
+      {'t': '第一卷', 'c': ['c1', 'c2'], 'i': null},
+    ]);
+    await box.put('read:1', ['c1']);
+    await box.put('vrate:1', {'第一卷': 3});
+    await box.put('stats:ch:1', {
+      'c1': {'2026-10-20': 40},
+    });
+    await Sync.merge(remote(extra: {
+      'read': {'1': ['c2']},
+      'vrate': {
+        '1': {'第一卷': 5, '第二卷': 4},
+      },
+      'stats': {
+        'day': {},
+        'book': {},
+        'chapters': 0,
+        'meta': {},
+        'days': {},
+        'ch': {
+          '1': {
+            'c1': {'2026-10-20': 25},
+            'c2': {'2026-10-21': 50},
+          },
+        },
+      },
+    }));
+    expect(Volumes.done('1').containsKey('第一卷'), isTrue);
+    expect(Volumes.rating('1', '第一卷'), 3); // 本机已评的不被覆盖
+    expect(Volumes.rating('1', '第二卷'), 4);
+    expect(ReadingStats.chapterSeconds('1')['c1']?['2026-10-20'], 65);
+    expect(ReadingStats.chapterSeconds('1')['c2']?['2026-10-21'], 50);
   });
 
   test('WebDAV 全流程：自动建文件夹、上传本机快照、读取并合并别的设备', () async {

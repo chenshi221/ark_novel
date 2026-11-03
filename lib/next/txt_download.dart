@@ -19,7 +19,14 @@ class TxtDownloader {
       try {
         final r = await _dio.get<List<int>>(Wenku8Txt.fullBookUrl(aid, node: node));
         final data = r.data;
-        if (data != null && data.isNotEmpty) return data is Uint8List ? data : Uint8List.fromList(data);
+        if (data != null && data.isNotEmpty) {
+          final head = String.fromCharCodes(data.take(64)).trimLeft().toLowerCase();
+          if (head.startsWith('<!doctype') || head.startsWith('<html')) {
+            error = Exception('下载节点 $node 返回了错误页');
+            continue;
+          }
+          return data is Uint8List ? data : Uint8List.fromList(data);
+        }
         error = Exception('下载到的 TXT 是空的');
       } catch (e) {
         error = e;

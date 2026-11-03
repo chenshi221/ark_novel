@@ -95,9 +95,10 @@ class _StoragePageState extends ConsumerState<StoragePage> {
                   icon: Icon(Icons.delete_outline, color: scheme.onSurfaceVariant),
                   onPressed: () async {
                     if (!await _ask('删除这本书的缓存？', '再读时重新下载。')) return;
+                    if (!mounted) return;
                     ref.read(downloadProvider.notifier).forget(aid); // 正在下载的先停掉
                     await ChapterCache.remove(aid);
-                    _refresh();
+                    if (mounted) _refresh();
                   },
                 ),
               ),

@@ -14,8 +14,8 @@ const _gap = Duration(seconds: 1);
 /// App 自己的请求被 Cloudflare 拦下时，改用不显示的网页加载同一地址并取整页 HTML。
 /// 网页是真浏览器，Cloudflare 通常直接放行；cookie 和登录用的网页共用，登录状态自然带上。
 /// 一次只开一个网页，其余排队。网页也过不去（一直停在验证页）就照旧抛 [CloudflareChallengeException]，让界面提示去验证。
-Future<String> webFetch(String url, {String? referer, String proxy = ''}) {
-  final result = _tail.then((_) => _load(url, referer, proxy));
+Future<String> webFetch(String url, {String? referer, String proxy = '', Future<void> Function(String cookies, String? userAgent)? onSession}) {
+  final result = _tail.then((_) => _load(url, referer, proxy, onSession));
   _tail = result.then<void>((_) {}, onError: (_) {}).then((_) => Future<void>.delayed(_gap));
   return result;
 }
@@ -33,7 +33,7 @@ Future<void> applyWebViewProxy(String proxy) async {
   } catch (_) {}
 }
 
-Future<String> _load(String url, String? referer, String proxy) async {
+Future<String> _load(String url, String? referer, String proxy, Future<void> Function(String cookies, String? userAgent)? onSession) async {
   await applyWebViewProxy(proxy);
   final done = Completer<String>();
   final view = HeadlessInAppWebView(
@@ -41,22 +41,39 @@ Future<String> _load(String url, String? referer, String proxy) async {
     // 只要 HTML，不下图片，少发请求
     initialSettings: InAppWebViewSettings(blockNetworkImage: true),
     onLoadStop: (c, _) async {
-      final title = await c.getTitle() ?? '';
-      // Cloudflare 的验证页过了会自己跳走，等下一次加载完成
-      if (title.contains('Just a moment')) return;
-      if (title.startsWith('Access denied')) {
-        if (!done.isCompleted) done.completeError(Cloudflare403Exception(requestOptions: RequestOptions(path: url)));
-        return;
+      try {
+        final title = await c.getTitle() ?? '';
+        // Cloudflare 的验证页过了会自己跳走，等下一次加载完成
+        if (title.contains('Just a moment')) return;
+        if (title.startsWith('Access denied')) {
+          if (!done.isCompleted) done.completeError(Cloudflare403Exception(requestOptions: RequestOptions(path: url)));
+          return;
+        }
+        final html = await c.evaluateJavascript(source: 'document.documentElement.outerHTML');
+        if (done.isCompleted) return;
+        if (html is String) {
+          if (onSession != null) {
+            try {
+              final list = await CookieManager.instance().getCookies(url: WebUri(url));
+              final cookies = list.map((e) => '${e.name}=${e.value}').join('; ');
+              final ua = await c.evaluateJavascript(source: 'navigator.userAgent');
+              if (cookies.isNotEmpty) await onSession(cookies, ua is String ? ua : null);
+            } catch (_) {}
+          }
+          if (!done.isCompleted) done.complete(html);
+        } else {
+          done.completeError(DioException(requestOptions: RequestOptions(path: url), message: 'empty webview html'));
+        }
+      } catch (e) {
+        if (!done.isCompleted) done.completeError(e);
       }
-      final html = await c.evaluateJavascript(source: 'document.documentElement.outerHTML');
-      if (!done.isCompleted && html is String) done.complete(html);
     },
     onReceivedError: (_, request, error) {
       if (request.isForMainFrame != false && !done.isCompleted) done.completeError(DioException(requestOptions: RequestOptions(path: url), message: error.description));
     },
   );
-  await view.run();
   try {
+    await view.run();
     return await done.future.timeout(const Duration(seconds: 20), onTimeout: () => throw CloudflareChallengeException(requestOptions: RequestOptions(path: url)));
   } finally {
     await view.dispose();

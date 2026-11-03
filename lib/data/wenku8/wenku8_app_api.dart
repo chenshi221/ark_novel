@@ -50,7 +50,7 @@ class Wenku8AppApi {
   static final RegExp _separatorPattern = RegExp(r'^[\s★☆◆◇■□▲△▼▽○●◎※＊*\-—–_=＝~～·・]+$');
   static final RegExp _volumePattern = RegExp(r'<volume\b([^>]*)>(.*?)</volume>', caseSensitive: false, dotAll: true);
   static final RegExp _chapterPattern = RegExp(r'<chapter\b([^>]*)>(.*?)</chapter>', caseSensitive: false, dotAll: true);
-  static final RegExp _entityPattern = RegExp(r'&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);');
+  static final RegExp _entityPattern = RegExp(r'&(#[xX][0-9a-fA-F]+|#\d+|[a-zA-Z]+);');
 
   final Dio _dio;
   final List<String> _endpoints;
@@ -228,7 +228,7 @@ class Wenku8AppApi {
       if (entity.startsWith('#')) {
         final isHex = entity.length > 1 && (entity[1] == 'x' || entity[1] == 'X');
         final code = isHex ? int.tryParse(entity.substring(2), radix: 16) : int.tryParse(entity.substring(1));
-        return code == null ? match.group(0)! : String.fromCharCode(code);
+        return code == null || code < 0 || code > 0x10FFFF ? match.group(0)! : String.fromCharCode(code);
       }
       return switch (entity) {
         'amp' => '&',

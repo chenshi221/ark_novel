@@ -14,12 +14,12 @@ class Wenku8Txt {
   /// GBK 解码；GBK 装不下的字符 TXT 里写成 `&#8231;` 这种实体，顺手解开。
   static String decode(Uint8List bytes) => decodeEntities(Wenku8Charset.decode(bytes, CharsetType.gbk));
 
-  static final _entity = RegExp(r'&#(x[0-9a-fA-F]+|\d+);');
+  static final _entity = RegExp(r'&#([xX][0-9a-fA-F]+|\d+);');
 
   static String decodeEntities(String s) => s.replaceAllMapped(_entity, (m) {
     final v = m[1]!;
-    final code = v.startsWith('x') ? int.tryParse(v.substring(1), radix: 16) : int.tryParse(v);
-    return code == null ? m[0]! : String.fromCharCode(code);
+    final code = (v.startsWith('x') || v.startsWith('X')) ? int.tryParse(v.substring(1), radix: 16) : int.tryParse(v);
+    return code == null || code < 0 || code > 0x10FFFF ? m[0]! : String.fromCharCode(code);
   });
 
   /// 纯分隔行（◆◇、★☆ 之类）
@@ -30,10 +30,12 @@ class Wenku8Txt {
   /// TXT 和网站出自同一份数据：每章标题顶格写成「卷名 章名」，正文行都有缩进，
   /// 所以拿网站目录拼出标题逐行对，不靠关键词猜。插图章在 TXT 里只有标题没有正文，不会出现在结果里。
   static Map<String, String> byCatalogue(String text, List<CatVolume> catalogue) {
-    final heads = {
-      for (final v in catalogue)
-        for (final c in v.chapters) _key('${v.title} ${c.title}'): c.cid,
-    };
+    final heads = <String, List<String>>{};
+    for (final v in catalogue) {
+      for (final c in v.chapters) {
+        (heads[_key('${v.title} ${c.title}')] ??= []).add(c.cid);
+      }
+    }
     final texts = <String, String>{};
     final paragraphs = <String>[];
     String? cid;
@@ -46,10 +48,10 @@ class Wenku8Txt {
       final t = line.trim();
       if (t.isEmpty) continue;
       if (line == line.trimLeft()) {
-        final hit = heads[_key(t)];
-        if (hit != null) {
+        final hits = heads[_key(t)];
+        if (hits != null && hits.isNotEmpty) {
           flush();
-          cid = hit;
+          cid = hits.length > 1 ? hits.removeAt(0) : hits.first;
           continue;
         }
         // 开头的横幅、末尾的宣传语都顶格且带网址；正文里提到文库的段落有缩进，不受影响

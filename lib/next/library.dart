@@ -132,6 +132,7 @@ class LibraryState {
 /// 本地书架：加入 / 移出先改本地，再排队推到网站；[sync] 拉网站书架对一遍。分类只在本地。
 class LibraryController extends Notifier<LibraryState> {
   bool _syncing = false;
+  String? _flushingAid;
 
   @override
   LibraryState build() => LibraryState(
@@ -140,18 +141,22 @@ class LibraryController extends Notifier<LibraryState> {
   );
 
   Future<void> _save(Map<String, LibBook> books, [List<LibCategory>? cats]) async {
+    state = LibraryState(books, cats ?? state.cats);
     await _box.put('lib:books', {for (final b in books.values) b.aid: b.toMap()});
     if (cats != null) await _box.put('lib:cats', [for (final c in cats) {'id': c.id, 'name': c.name}]);
-    state = LibraryState(books, cats ?? state.cats);
   }
 
   Map<String, Map> _ops() => ((_box.get('lib:ops') as Map?) ?? const {}).map((k, v) => MapEntry(k as String, Map.from(v as Map)));
 
   Future<void> _queue(String aid, Map op) async {
     final ops = _ops();
-    // 加了又移（或反过来）且还没推到网站：两个操作抵消
+    // 加了又移（或反过来）且还没推到网站：两个操作抵消（正在推送中的那条不能抵消）
     final prev = ops.remove(aid);
-    if (prev == null || prev['op'] == op['op']) ops[aid] = op;
+    if (_flushingAid == aid || prev == null || prev['op'] == op['op']) {
+      ops[aid] = op;
+    } else if (prev['op'] == 'remove' && op['op'] == 'add' && prev['bid'] != null && state.books[aid] != null) {
+      await _save({...state.books, aid: state.books[aid]!.copyWith(bid: prev['bid'] as String?)});
+    }
     await _box.put('lib:ops', ops);
   }
 
@@ -225,25 +230,30 @@ class LibraryController extends Notifier<LibraryState> {
   /// 网站拒绝（例如书架满了）：放弃这个操作，书只留在本地；网络问题：停下，留到下次。
   Future<void> _flush(Api api, Map<String, RemoteBook>? remote) async {
     final done = <String, Object?>{}; // 处理完的 aid → 当时的操作
-    for (final MapEntry(key: aid, value: op) in _ops().entries) {
-      try {
-        if (op['op'] == 'add') {
-          if (remote == null || !remote.containsKey(aid)) await api.addToBookshelf(aid);
-        } else {
-          final bid = remote?[aid]?.bid ?? op['bid'] as String?;
-          if (bid == null) {
-            if (remote == null) continue; // 不知道 bid：等下次拉到网站书架再说
-          } else if (remote == null || remote.containsKey(aid)) {
-            await api.removeFromBookshelf(bid);
+    try {
+      for (final MapEntry(key: aid, value: op) in _ops().entries) {
+        _flushingAid = aid;
+        try {
+          if (op['op'] == 'add') {
+            if (remote == null || !remote.containsKey(aid)) await api.addToBookshelf(aid);
+          } else {
+            final bid = remote?[aid]?.bid ?? op['bid'] as String?;
+            if (bid == null) {
+              if (remote == null) continue; // 不知道 bid：等下次拉到网站书架再说
+            } else if (remote == null || remote.containsKey(aid)) {
+              await api.removeFromBookshelf(bid);
+            }
+            remote?.remove(aid);
           }
-          remote?.remove(aid);
+          done[aid] = op['op'];
+        } on Wenku8UnexpectedPageException {
+          done[aid] = op['op'];
+        } catch (_) {
+          break;
         }
-        done[aid] = op['op'];
-      } on Wenku8UnexpectedPageException {
-        done[aid] = op['op'];
-      } catch (_) {
-        break;
       }
+    } finally {
+      _flushingAid = null;
     }
     // 推送期间用户可能又加 / 移了书：重新读一遍，只去掉处理过且没变的
     final ops = _ops()..removeWhere((aid, op) => done.containsKey(aid) && done[aid] == op['op']);

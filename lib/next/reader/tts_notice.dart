@@ -19,6 +19,9 @@ class TtsNotice extends BaseAudioHandler {
   ).then<TtsNotice?>((h) => h, onError: (_) => null);
 
   void Function()? onPlay, onPause, onStop, onNext, onPrev;
+  int _gen = 0;
+
+  void clearCallbacks() => onPlay = onPause = onStop = onNext = onPrev = null;
 
   @override
   Future<void> play() async => onPlay?.call();
@@ -32,6 +35,7 @@ class TtsNotice extends BaseAudioHandler {
   Future<void> skipToPrevious() async => onPrev?.call();
 
   void show({required String book, required String chapter, String? cover /* 本地文件路径 */, required bool playing}) {
+    _gen++;
     mediaItem.add(MediaItem(id: '$book/$chapter', title: chapter, album: book, artist: book, artUri: cover == null ? null : Uri.file(cover)));
     playbackState.add(
       PlaybackState(
@@ -46,9 +50,11 @@ class TtsNotice extends BaseAudioHandler {
   /// 收起通知、停掉前台服务。服务一直被 App 绑着，audio_service 的 stop 删不掉通知：
   /// 先发一次暂停让它退出前台，再自己把通知删掉。
   Future<void> hide() async {
+    final g = ++_gen;
     playbackState.add(playbackState.value.copyWith(playing: false));
     playbackState.add(PlaybackState(processingState: AudioProcessingState.idle, playing: false));
     await Future<void>.delayed(const Duration(milliseconds: 300)); // 等上面两次状态发到原生那边
+    if (g != _gen) return;
     await const MethodChannel('ark/tts').invokeMethod('cancelNotice').catchError((_) {});
   }
 }

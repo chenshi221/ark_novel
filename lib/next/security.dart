@@ -68,13 +68,14 @@ class _AppGuardState extends ConsumerState<AppGuard> with WidgetsBindingObserver
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!lockSupported || !AppPrefs.read(P.lock, false)) return;
-    if (state == AppLifecycleState.paused) {
-      _pausedAt = DateTime.now();
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      _pausedAt ??= DateTime.now();
+      if (!_locked && AppPrefs.read(P.lockAfter, 0) == 0) setState(() => _locked = true);
     } else if (state == AppLifecycleState.resumed && _pausedAt != null) {
       final away = DateTime.now().difference(_pausedAt!);
       _pausedAt = null;
-      if (!_locked && away.inSeconds >= AppPrefs.read(P.lockAfter, 0) * 60) {
-        setState(() => _locked = true);
+      if (_locked || away.inSeconds >= AppPrefs.read(P.lockAfter, 0) * 60) {
+        if (!_locked) setState(() => _locked = true);
         _unlock();
       }
     }
@@ -94,7 +95,13 @@ class _AppGuardState extends ConsumerState<AppGuard> with WidgetsBindingObserver
     ref.listen(incognitoProvider, (_, _) => _syncSecure());
     return Stack(
       children: [
-        widget.child,
+        ExcludeFocus(
+          excluding: _locked,
+          child: ExcludeSemantics(
+            excluding: _locked,
+            child: IgnorePointer(ignoring: _locked, child: widget.child),
+          ),
+        ),
         if (_locked)
           Positioned.fill(
             child: Material(

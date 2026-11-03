@@ -14,11 +14,14 @@ import 'paginator.dart';
 
 /// 章节：正文（已套用替换规则、统一缩进）、插图地址、高亮位置。
 class Chapter {
-  const Chapter({required this.text, required this.images, required this.marks});
+  const Chapter({required this.text, required this.images, required this.marks, this.locked = false});
 
   final String text;
   final List<String> images;
   final List<Mark> marks;
+
+  /// 受限书取不到正文，[text] 只是一句说明
+  final bool locked;
 }
 
 /// 往前翻章时用的"落在最后一页"标记（偏移量超出任何正文）。
@@ -349,10 +352,16 @@ class _ScrollBodyState extends State<ScrollBody> {
     final max = _controller.position.maxScrollExtent;
     final off = widget.startOffset;
     final ro = _textKey.currentContext?.findRenderObject();
-    if (off >= kToEnd) return _controller.jumpTo(max);
-    if (off <= 0 || ro is! RenderParagraph) return;
-    final caret = ro.getOffsetForCaret(TextPosition(offset: math.min(off, widget.chapter.text.length)), Rect.zero);
-    _controller.jumpTo((_padTop + caret.dy).clamp(0.0, max));
+    if (off >= kToEnd) {
+      _controller.jumpTo(max);
+      widget.onOffset(_charAtTop());
+      return;
+    }
+    if (off > 0 && ro is RenderParagraph) {
+      final caret = ro.getOffsetForCaret(TextPosition(offset: math.min(off, widget.chapter.text.length)), Rect.zero);
+      _controller.jumpTo((_padTop + caret.dy).clamp(0.0, max));
+    }
+    if (max <= 0 || _controller.position.pixels >= max - 40) widget.onEnd();
   }
 
   int _charAtTop() {
@@ -837,7 +846,11 @@ class _PagedBodyState extends State<PagedBody> {
           _publish();
           _imgBox = Size(box.maxWidth / cols, box.maxHeight);
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _prefetch();
+            if (!mounted) return;
+            if (_cur != widget.startOffset) widget.onOffset(_cur);
+            // 往回翻落在上一章最后一页不算读完
+            if (_page >= _units - 1 && widget.startOffset < kToEnd) widget.onEnd();
+            _prefetch();
           });
         }
         final Widget pages;

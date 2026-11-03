@@ -129,7 +129,9 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
     final box = _coverKey.currentContext?.findRenderObject() as RenderBox?;
     if (_opening != null) return;
     if (box == null || !box.hasSize) {
-      context.push(Routes.reader(widget.aid, cid));
+      context.push(Routes.reader(widget.aid, cid)).then((_) {
+        if (mounted) setState(() {});
+      });
       return;
     }
     _opening = OverlayEntry(
@@ -137,7 +139,11 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
         from: box.localToGlobal(Offset.zero) & box.size,
         url: url,
         onOpened: () {
-          if (mounted) context.push(Routes.reader(widget.aid, cid));
+          if (mounted) {
+            context.push(Routes.reader(widget.aid, cid)).then((_) {
+              if (mounted) setState(() {});
+            });
+          }
         },
         onDone: _closeBook,
       ),
@@ -182,6 +188,7 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
 
   @override
   void dispose() {
+    _closeBook();
     _route?.removeStatusListener(_onRoute);
     _intro.dispose();
     _pc.dispose();
@@ -270,10 +277,7 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
             )
           : const SizedBox(height: 16);
       // 卷名和进度在打开动画的后半段浮上来
-      final shown = CurvedAnimation(
-        parent: ModalRoute.of(context)?.animation ?? kAlwaysCompleteAnimation,
-        curve: const Interval(0.5, 1, curve: Curves.easeOut),
-      );
+      final shown = CurveTween(curve: const Interval(0.5, 1, curve: Curves.easeOut)).animate(ModalRoute.of(context)?.animation ?? kAlwaysCompleteAnimation);
       final summary = FadeTransition(
         opacity: shown,
         child: SlideTransition(
@@ -375,7 +379,15 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.white, fontSize: 18),
                 ),
-                actions: [IconButton(tooltip: '书籍详情', icon: const Icon(Icons.info_outline), onPressed: () => context.push(Routes.novel(aid)))],
+                actions: [
+                  IconButton(
+                    tooltip: '书籍详情',
+                    icon: const Icon(Icons.info_outline),
+                    onPressed: () => context.push(Routes.novel(aid)).then((_) {
+                      if (mounted) setState(() {});
+                    }),
+                  ),
+                ],
               ),
               Expanded(child: body),
             ],
@@ -705,7 +717,9 @@ class _DetailsState extends State<_Details> {
                       Expanded(
                         child: FilledButton.icon(
                           style: FilledButton.styleFrom(minimumSize: const Size(0, 40), textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                          onPressed: () => context.push(Routes.reader(aid, next)),
+                          onPressed: () => context.push(Routes.reader(aid, next)).then((_) {
+                            if (mounted) setState(() {});
+                          }),
                           icon: const Icon(Icons.play_arrow, size: 20),
                           label: Text(label),
                         ),
@@ -758,7 +772,11 @@ class _DetailsState extends State<_Details> {
                         ),
                       ),
                       trailing: cid == p?.cid ? const Text('读到这里', style: TextStyle(color: Colors.white, fontSize: 12)) : null,
-                      onTap: _picked.isNotEmpty ? () => _pick(cid) : () => context.push(Routes.reader(aid, cid)),
+                      onTap: _picked.isNotEmpty
+                          ? () => _pick(cid)
+                          : () => context.push(Routes.reader(aid, cid)).then((_) {
+                              if (mounted) setState(() {});
+                            }),
                       onLongPress: () => _pick(cid),
                     )),
                 ],

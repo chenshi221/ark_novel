@@ -54,6 +54,7 @@ final coverColorProvider = FutureProvider.family<Color, String>((ref, url) async
   final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
   final (w, h) = (image.width, image.height);
   image.dispose();
+  codec.dispose();
   final rgba = data!.buffer.asUint8List();
   final color = tintFrom(crop == null ? rgba : cropRgba(rgba, w, h, crop));
   await box.put('ccolor', {...((box.get('ccolor') as Map?) ?? const {}), url: color.toARGB32()});

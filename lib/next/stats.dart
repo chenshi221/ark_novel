@@ -60,18 +60,38 @@ class ReadingStats {
   }
 
   static Future<void> setMeta(String aid, String title, String author, String img) async {
+    if (Incognito.on) return;
     final all = Map.of((_box.get('stats:meta') as Map?) ?? const {});
     all[aid] = {'t': title, 'a': author, 'i': img};
     await _box.put('stats:meta', all);
   }
 
-  /// 每章每天读了多少秒：cid → 日期 → 秒。按卷统计时长、天数用（这个功能加上之后才开始记）。
-  static Map<String, Map<String, int>> chapterSeconds(String aid) => ((_box.get('stats:ch:$aid') as Map?) ?? const {}).map(
+  static Map<String, Map<String, int>> _localChapterSeconds(String aid) => ((_box.get('stats:ch:$aid') as Map?) ?? const {}).map(
     (k, v) => MapEntry(k as String, (v as Map).map((d, s) => MapEntry(d as String, s as int))),
   );
 
+  /// 每章每天读了多少秒：cid → 日期 → 秒。按卷统计时长、天数用（这个功能加上之后才开始记）。
+  static Map<String, Map<String, int>> chapterSeconds(String aid) {
+    final out = _localChapterSeconds(aid);
+    for (final s in Sync.otherStats()) {
+      final ch = (s['ch'] as Map?)?[aid];
+      if (ch is! Map) continue;
+      for (final ce in ch.entries) {
+        if (ce.value is! Map) continue;
+        final days = out['${ce.key}'] ??= {};
+        for (final de in (ce.value as Map).entries) {
+          if (de.value is int) days['${de.key}'] = (days['${de.key}'] ?? 0) + (de.value as int);
+        }
+      }
+    }
+    return out;
+  }
+
   /// 读过的书 aid（按章记过时长的）
-  static Iterable<String> chapterBooks() => _box.keys.whereType<String>().where((k) => k.startsWith('stats:ch:')).map((k) => k.substring(9));
+  static Iterable<String> chapterBooks() => {
+    ..._box.keys.whereType<String>().where((k) => k.startsWith('stats:ch:')).map((k) => k.substring(9)),
+    for (final s in Sync.otherStats()) ...(((s['ch'] as Map?) ?? const {}).keys.map((k) => '$k')),
+  };
 
   /// 日期满足 [inDay] 的那些天里，每本书读了多少秒：aid → 秒。按章记的时长合计，只有本机的、这个功能加上之后的。
   static Map<String, int> booksOn(bool Function(String day) inDay) => {
@@ -81,20 +101,18 @@ class ReadingStats {
 
   static Future<void> addSeconds(String aid, int seconds, {String? cid}) async {
     if (seconds <= 0 || Incognito.on) return;
+    final today = dayKey(DateTime.now());
     if (cid != null) {
-      final ch = chapterSeconds(aid);
-      final today = dayKey(DateTime.now());
+      final ch = _localChapterSeconds(aid);
       final days = ch[cid] ??= {};
       days[today] = (days[today] ?? 0) + seconds;
       await _box.put('stats:ch:$aid', ch);
     }
-    final today = dayKey(DateTime.now());
     final days = ((_box.get('stats:days:$aid') as List?) ?? const []).cast<String>();
     if (!days.contains(today)) await _box.put('stats:days:$aid', [...days, today]);
     final day = _map('stats:day'); // 只累加本机自己的，别的设备的统计单独存放
     final book = _map('stats:book');
-    final k = dayKey(DateTime.now());
-    day[k] = (day[k] ?? 0) + seconds;
+    day[today] = (day[today] ?? 0) + seconds;
     book[aid] = (book[aid] ?? 0) + seconds;
     await _box.put('stats:day', day);
     await _box.put('stats:book', book);
@@ -102,10 +120,11 @@ class ReadingStats {
 
   static Future<void> addChapter(String aid, String cid) async {
     if (Incognito.on) return;
+    final today = dayKey(DateTime.now());
     final seen = ((_box.get('stats:seen') as List?) ?? const []).cast<String>();
-    final key = '${dayKey(DateTime.now())}:$aid:$cid';
+    final key = '$today:$aid:$cid';
     if (seen.contains(key)) return;
-    await _box.put('stats:seen', [...seen.where((e) => e.startsWith(dayKey(DateTime.now()))), key]);
+    await _box.put('stats:seen', [...seen.where((e) => e.startsWith(today)), key]);
     await _box.put('stats:chapters', ((_box.get('stats:chapters') as int?) ?? 0) + 1);
   }
 }

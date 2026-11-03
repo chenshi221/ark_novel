@@ -59,7 +59,10 @@ class Volumes {
       for (final v in cat)
         {'t': v.title, 'c': [for (final c in v.chapters) c.cid], 'i': v.chapters.where((c) => isIllustration(c.title)).firstOrNull?.cid},
     ];
-    if (!listEquals(next.map((e) => '${e['t']}|${(e['c'] as List).length}').toList(), of(aid).map((v) => '${v.title}|${v.cids.length}').toList())) {
+    if (!listEquals(
+      next.map((e) => '${e['t']}|${(e['c'] as List).join(',')}|${e['i']}').toList(),
+      of(aid).map((v) => '${v.title}|${v.cids.join(',')}|${v.illus}').toList(),
+    )) {
       await _box.put('vols:$aid', next);
     }
     await refreshDone(aid);
@@ -159,7 +162,10 @@ class Volumes {
 
   static int rating(String aid, String title) => ((_box.get('vrate:$aid') as Map?)?[title] as int?) ?? 0;
 
-  static Future<void> setRating(String aid, String title, int stars) => _box.put('vrate:$aid', {...((_box.get('vrate:$aid') as Map?) ?? const {}), title: stars});
+  static Future<void> setRating(String aid, String title, int stars) async {
+    await _box.put('vrate:$aid', {...((_box.get('vrate:$aid') as Map?) ?? const {}), title: stars});
+    changes.value++;
+  }
 
   // ---- 统计 ----
 
@@ -273,6 +279,7 @@ class VolumeCoverQueue {
         }
         var content = await ChapterCache.get(aid, v.illus!);
         if (content == null) {
+          final ticket = ChapterCache.ticket(aid, v.illus!);
           try {
             content = await runInBackground<Future<Content>>(() => _ref.read(apiProvider).chapter(aid, v.illus!));
           } on ChapterLockedException {
@@ -286,7 +293,7 @@ class VolumeCoverQueue {
             await skip();
             continue;
           }
-          await ChapterCache.put(aid, v.illus!, content);
+          await ChapterCache.put(aid, v.illus!, content, ticket: ticket);
           await Future<void>.delayed(const Duration(milliseconds: 1500));
         }
         final String url;

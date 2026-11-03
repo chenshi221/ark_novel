@@ -1077,7 +1077,13 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     setState(() => _selected.contains(aid) ? _selected.remove(aid) : _selected.add(aid));
   }
 
-  void _tap(LibBook b) => _selected.isEmpty ? context.push(Routes.novel(b.aid)) : _toggle(b.aid);
+  void _openAndRefresh(String route) {
+    context.push(route).then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _tap(LibBook b) => _selected.isEmpty ? _openAndRefresh(Routes.novel(b.aid)) : _toggle(b.aid);
 
   /// 封面右下角的"继续阅读"：直接回到上次读的位置（读过才有）。
   Widget? _resume(LibBook b) {
@@ -1088,7 +1094,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
       visualDensity: VisualDensity.compact,
       iconSize: 18,
       icon: const Icon(Icons.play_arrow),
-      onPressed: () => context.push(Routes.reader(b.aid, p.cid)),
+      onPressed: () => _openAndRefresh(Routes.reader(b.aid, p.cid)),
     );
   }
 
@@ -1163,7 +1169,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     final behind = [for (final v in vols.skip(1).take(stackEdges(vols.length))) queue.volCover(b.aid, v, b.img)];
     final theme = Theme.of(context);
     return GestureDetector(
-      onTap: () => _selected.isEmpty ? context.push(Routes.volumes(b.aid)) : _toggle(b.aid),
+      onTap: () => _selected.isEmpty ? _openAndRefresh(Routes.volumes(b.aid)) : _toggle(b.aid),
       onLongPress: () => _toggle(b.aid),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

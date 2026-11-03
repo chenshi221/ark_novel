@@ -100,10 +100,15 @@ class UpdateController extends Notifier<UpdateProgress> {
   /// 设置里"只更新哪些书"的条件：跳过已完结 / 没开始读 / 还有未读的，以及只更新 / 不更新某些分类（[only] 指定书时不看分类）。
   bool _wanted(LibBook b, Map<String, int> known) {
     if (AppPrefs.read(P.updSkipDone, false) && b.done) return false;
-    final started = ReadingProgress.of(b.aid) != null || ReadState.read(b.aid).isNotEmpty;
+    final read = ReadState.read(b.aid);
+    final started = ReadingProgress.of(b.aid) != null || read.isNotEmpty;
     if (AppPrefs.read(P.updSkipNotStarted, false) && !started) return false;
     final total = known[b.aid] ?? 0;
-    if (AppPrefs.read(P.updSkipUnread, false) && total > 0 && total - ReadState.read(b.aid).length > 0) return false;
+    if (AppPrefs.read(P.updSkipUnread, false) && total > 0) {
+      final vols = Volumes.of(b.aid);
+      final hasUnread = vols.isNotEmpty ? vols.expand((v) => v.textCids).any((c) => !read.contains(c)) : total - read.length > 0;
+      if (hasUnread) return false;
+    }
     return true;
   }
 

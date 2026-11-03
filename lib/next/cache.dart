@@ -87,6 +87,10 @@ class ChapterCache {
   static Future<bool> put(String aid, String cid, Content c, {(int, int)? ticket}) async {
     if (ticket != null && ticket != ChapterCache.ticket(aid, cid)) return false;
     await _text.put('$aid:$cid', _pack(c.text, c.images));
+    if (ticket != null && ticket != ChapterCache.ticket(aid, cid)) {
+      await _text.delete('$aid:$cid');
+      return false;
+    }
     final old = _index.get('$aid:$cid') as int?;
     _tally(aid, old == null ? 1 : 0, c.text.length - (old ?? 0));
     await _index.put('$aid:$cid', c.text.length);
@@ -142,10 +146,10 @@ class ChapterCache {
   static Future<void> remove(String aid, {bool compact = true}) async {
     _bookGen[aid] = (_bookGen[aid] ?? 0) + 1;
     final keys = [..._keys(aid), 'meta:$aid', 'oimg|$aid'];
-    await _text.deleteAll(keys);
-    await _index.deleteAll(keys);
     _counts.remove(aid);
     _charsOf.remove(aid);
+    await _index.deleteAll(keys);
+    await _text.deleteAll(keys);
     if (compact) await _text.compact();
   }
 
@@ -155,8 +159,8 @@ class ChapterCache {
     }
     final keys = [for (final c in cids) '$aid:$c'].where(_index.containsKey).toList();
     _tally(aid, -keys.length, -_chars(keys));
-    await _text.deleteAll(keys);
     await _index.deleteAll(keys);
+    await _text.deleteAll(keys);
     if (compact) await _text.compact();
   }
 
@@ -196,7 +200,12 @@ class ChapterCache {
   /// 正文文件实际占用（含还没整理掉的旧数据）；网页预览拿不到，按每字 3 字节估
   static int totalBytes() {
     final path = kIsWeb ? null : _text.path;
-    return path == null ? _allChars() * 3 : File(path).lengthSync();
+    if (path == null) return _allChars() * 3;
+    try {
+      return File(path).lengthSync();
+    } catch (_) {
+      return _allChars() * 3;
+    }
   }
 
   /// 一本书的正文大约占多少：按它的字数占总字数的比例分摊 [totalBytes]

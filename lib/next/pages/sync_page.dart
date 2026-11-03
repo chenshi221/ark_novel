@@ -74,9 +74,10 @@ class _SyncPageState extends ConsumerState<SyncPage> {
       final picked = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: ['json']);
       if (picked == null) return;
       final merged = await Sync.importBackup(utf8.decode(await File(picked.path!).readAsBytes()));
+      if (!mounted) return;
       setState(() => _note = merged ? '已导入备份' : '这是本机导出的备份，不需要导入');
     } catch (e) {
-      setState(() => _note = '导入失败：$e');
+      if (mounted) setState(() => _note = '导入失败：$e');
     }
   }
 

@@ -21,7 +21,24 @@ class Backup {
   static const _dirs = ['avatar', 'font'];
 
   /// 登录信息、代理和 WebDAV 账号留在本机：不进备份，恢复时也不动
-  static const _localKeys = {'cookie', 'ua', 'savedUser', 'savedPass', 'userHtml', 'proxy', 'sync:url', 'sync:user', 'sync:pass', 'sync:folder'};
+  static const _localKeys = {
+    'cookie',
+    'ua',
+    'savedUser',
+    'savedPass',
+    'userHtml',
+    'proxy',
+    'sync:url',
+    'sync:user',
+    'sync:pass',
+    'sync:folder',
+    'lib:imported',
+    'lib:ops',
+    'imgShrunk2',
+    'imgHq',
+    'coverSkipDropped',
+    'coverRetrimmed',
+  };
 
   static bool _isLocal(String k) => _localKeys.contains(k) || k.startsWith('cf:');
 
@@ -44,11 +61,22 @@ class Backup {
   static Future<void> importZip(String zip) async {
     final dir = await _supportDir();
     await compute((a) => unpack(a.zip, a.dir), (zip: zip, dir: dir));
+    await Hive.close();
   }
 
   static Future<void> applyPending() async => apply(await _supportDir());
 
   static Future<void> pack(String out, String data, String supportDir) async {
+    var total = utf8.encode(data).length;
+    for (final d in _dirs) {
+      final dir = Directory(p.join(supportDir, d));
+      if (!await dir.exists()) continue;
+      await for (final f in dir.list().where((e) => e is File).cast<File>()) {
+        total += await f.length();
+      }
+    }
+    // 和 [unpack] 同一个上限：超了导出也恢复不了
+    if (total > _maxUnpackedBytes) throw const FormatException('备份超过 256 MB（多半是字体太多），删掉一些字体再导出');
     final zip = ZipFileEncoder()..create(out);
     zip.addArchiveFile(ArchiveFile.string('data.json', data));
     for (final d in _dirs) {
@@ -61,37 +89,55 @@ class Backup {
     await zip.close();
   }
 
+  static const _maxUnpackedBytes = 256 << 20;
+
   /// 先解压到临时目录，全部成功才改名成 [_pending]，中途出错不会留下半份。文件来自外部：只认约定好的路径。
   static Future<void> unpack(String zip, String supportDir) async {
     final tmp = Directory(p.join(supportDir, '$_pending.tmp'));
     if (await tmp.exists()) await tmp.delete(recursive: true);
-    final input = InputFileStream(zip);
     try {
-      for (final f in ZipDecoder().decodeStream(input).files) {
-        if (!f.isFile) continue;
-        final parts = f.name.split('/');
-        final ok = f.name == 'data.json' || (parts.length == 3 && parts[0] == 'files' && _dirs.contains(parts[1]) && parts[2].isNotEmpty && parts[2] != '..');
-        if (!ok) throw const FormatException('不是 Ark Novel 的备份文件');
-        final dest = File(p.join(tmp.path, f.name));
-        await dest.parent.create(recursive: true);
-        final output = OutputFileStream(dest.path);
-        f.writeContent(output);
-        await output.close();
+      final input = InputFileStream(zip);
+      try {
+        var totalBytes = 0;
+        for (final f in ZipDecoder().decodeStream(input).files) {
+          if (!f.isFile) continue;
+          final parts = f.name.split('/');
+          final validSub = parts.length == 3 &&
+              parts[0] == 'files' &&
+              _dirs.contains(parts[1]) &&
+              parts[2].isNotEmpty &&
+              parts[2] != '.' &&
+              parts[2] != '..' &&
+              !f.name.contains(r'\') &&
+              p.basename(parts[2]) == parts[2];
+          final ok = f.name == 'data.json' || validSub;
+          if (!ok) throw const FormatException('不是 Ark Novel 的备份文件');
+          totalBytes += f.size;
+          if (f.size < 0 || totalBytes > _maxUnpackedBytes) throw const FormatException('备份文件超出大小限制');
+          final dest = File(p.join(tmp.path, f.name));
+          await dest.parent.create(recursive: true);
+          final output = OutputFileStream(dest.path);
+          f.writeContent(output);
+          await output.close();
+        }
+      } finally {
+        await input.close();
       }
-    } finally {
-      await input.close();
+      final data = File(p.join(tmp.path, 'data.json'));
+      if (!await data.exists()) throw const FormatException('不是 Ark Novel 的备份文件');
+      final m = jsonDecode(await data.readAsString());
+      if (m is! Map || m['backup'] != 3 || m['box'] is! Map) throw const FormatException('不是 Ark Novel 的备份文件');
+      // 备份时没有的目录也建出来，恢复时才会把本机多出来的清掉
+      for (final d in _dirs) {
+        await Directory(p.join(tmp.path, 'files', d)).create(recursive: true);
+      }
+      final pending = Directory(p.join(supportDir, _pending));
+      if (await pending.exists()) await pending.delete(recursive: true);
+      await tmp.rename(pending.path);
+    } catch (_) {
+      if (await tmp.exists()) await tmp.delete(recursive: true);
+      rethrow;
     }
-    final data = File(p.join(tmp.path, 'data.json'));
-    if (!await data.exists()) throw const FormatException('不是 Ark Novel 的备份文件');
-    final m = jsonDecode(await data.readAsString());
-    if (m is! Map || m['backup'] != 3 || m['box'] is! Map) throw const FormatException('不是 Ark Novel 的备份文件');
-    // 备份时没有的目录也建出来，恢复时才会把本机多出来的清掉
-    for (final d in _dirs) {
-      await Directory(p.join(tmp.path, 'files', d)).create(recursive: true);
-    }
-    final pending = Directory(p.join(supportDir, _pending));
-    if (await pending.exists()) await pending.delete(recursive: true);
-    await tmp.rename(pending.path);
   }
 
   /// 换上待恢复的备份。必须在打开数据库之前调用；中途被杀掉的话，下次启动接着做，结果一样。

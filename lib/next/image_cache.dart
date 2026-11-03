@@ -26,8 +26,8 @@ class ImageStore {
   static const _memBytes = 64 << 20;
   final _mem = <String, Uint8List>{}; // Dart 的 Map 字面量保持插入顺序，当 LRU 用
   var _memUsed = 0;
-  final _downloaded = <String>{};
   final _inflight = <String, Future<Uint8List>>{};
+  final _cancelled = <String>{};
 
   // 网络下载排队：同时最多 [_maxNet] 张，按请求顺序（列表从上到下）。不排队时几十张一起抢带宽，挂代理时谁都快不了，最后一起冒出来。
   // 滑出屏幕的会被 [cancel] 从队里拿掉，所以排着的基本都是眼前这一屏的。
@@ -66,9 +66,6 @@ class ImageStore {
     return _srShown(rawUrl, url) ? _hit('$url#sr') : _hit(url);
   }
 
-  /// 这张图是不是本次运行时从网上下载的（界面据此决定要不要淡入）。
-  bool downloaded(String rawUrl) => _downloaded.contains(_norm(rawUrl));
-
   /// 图片字节；要放大清晰度的（见 [srSupported]）给放大后的，还没放大好就先给原图、排队去放大
   Future<Uint8List> load(String rawUrl) async {
     final bytes = await _load(rawUrl);
@@ -78,6 +75,7 @@ class ImageStore {
   /// 原图字节（不管清晰度）
   Future<Uint8List> _load(String rawUrl) {
     final url = _norm(rawUrl);
+    _cancelled.remove(url);
     final hit = _hit(url);
     if (hit != null) return Future.value(hit);
     final running = _inflight[url];
@@ -103,7 +101,7 @@ class ImageStore {
   void prefetch(Iterable<String> urls) {
     for (final raw in urls) {
       final url = _norm(raw);
-      if (raw.isEmpty || _mem.containsKey(url) || _inflight.containsKey(url)) continue;
+      if (raw.isEmpty || _mem.containsKey(url)) continue;
       _pinned.add(url);
       _load(url).whenComplete(() => _pinned.remove(url)).ignore(); // 只下载，放大清晰度等真要显示时再说
     }
@@ -148,7 +146,10 @@ class ImageStore {
     final url = _norm(rawUrl);
     if (_pinned.contains(url)) return;
     final c = _waiting.remove(url);
-    if (c == null) return;
+    if (c == null) {
+      if (_inflight.containsKey(url)) _cancelled.add(url);
+      return;
+    }
     _inflight.remove(url); // 马上又滑回来时重新排队，别拿到这个被取消的结果
     c.completeError(const ImageCancelled());
   }
@@ -160,16 +161,21 @@ class ImageStore {
       bytes = await file.readAsBytes();
       _touch(file).ignore();
     } else {
+      if (_cancelled.remove(url) && !_pinned.contains(url)) {
+        _inflight.remove(url);
+        throw const ImageCancelled();
+      }
       await _slot(url);
       try {
         // 封面图床的 https 在国内不开代理时常连不上，http 正常；缓存文件名仍按 https 地址算，旧缓存照用
         final res = await _ref.read(imageDioProvider).get<List<int>>(url.replaceFirst('https://img.wenku8.com/', 'http://img.wenku8.com/'));
-        bytes = await shrinkImage(Uint8List.fromList(res.data!));
+        final data = res.data;
+        if (data == null || data.isEmpty || (data.length > 5 && data[0] == 0x3C)) throw StateError('invalid image response');
+        bytes = await shrinkImage(Uint8List.fromList(data));
       } finally {
         _release();
       }
       await file.writeAsBytes(bytes);
-      _downloaded.add(url);
     }
     _put(url, bytes);
     return bytes;
@@ -290,11 +296,19 @@ class ImageStore {
   /// 删掉这些图的缓存（内存和磁盘）
   Future<void> remove(Iterable<String> urls) async {
     final dir = await _cacheDir();
+    final srDir = srSupported ? await _srDir() : null;
     for (final raw in urls) {
       final url = _norm(raw);
+      final name = _name(url);
       _memUsed -= _mem.remove(url)?.length ?? 0;
-      final f = File(p.join(dir.path, _name(url)));
+      _memUsed -= _mem.remove('$url#sr')?.length ?? 0;
+      _srDone?.remove(name);
+      final f = File(p.join(dir.path, name));
       if (await f.exists()) await f.delete();
+      if (srDir != null) {
+        final sf = File(p.join(srDir.path, name));
+        if (await sf.exists()) await sf.delete();
+      }
     }
   }
 

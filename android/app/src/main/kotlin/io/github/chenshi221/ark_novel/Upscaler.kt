@@ -20,14 +20,22 @@ class Upscaler(private val context: Context) {
     private val worker = Executors.newSingleThreadExecutor()
 
     private val modelBuffer: ByteBuffer by lazy {
-        val fileDescriptor = context.assets.openFd("sr_x4.tflite")
-        java.io.FileInputStream(fileDescriptor.fileDescriptor).use { inputStream ->
-            val fileChannel = inputStream.channel
-            fileChannel.map(
-                java.nio.channels.FileChannel.MapMode.READ_ONLY,
-                fileDescriptor.startOffset,
-                fileDescriptor.declaredLength
-            )
+        try {
+            context.assets.openFd("sr_x4.tflite").use { fileDescriptor ->
+                java.io.FileInputStream(fileDescriptor.fileDescriptor).use { inputStream ->
+                    inputStream.channel.map(
+                        java.nio.channels.FileChannel.MapMode.READ_ONLY,
+                        fileDescriptor.startOffset,
+                        fileDescriptor.declaredLength
+                    )
+                }
+            }
+        } catch (_: Exception) {
+            val bytes = context.assets.open("sr_x4.tflite").use { it.readBytes() }
+            ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.nativeOrder()).apply {
+                put(bytes)
+                rewind()
+            }
         }
     }
 

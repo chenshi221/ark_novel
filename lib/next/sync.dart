@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import 'volumes.dart';
+
 /// 同步：每台设备把自己的数据整份写成 `<文件夹>/<设备ID>.json` 放到 WebDAV（坚果云），
 /// 同步时读取其他设备的文件，按下面的规则并入本机。不依赖服务端，只要能 GET / PUT / PROPFIND。
 ///
@@ -94,6 +96,7 @@ class Sync {
       'read': byAid('read:'),
       'readchars': byAid('readchars:'),
       'rating': byAid('rating:'),
+      'vrate': byAid('vrate:'),
       'rules': _box.get('rules') ?? const [],
       'notes': byAid('notes:'),
       'tomb': _tombs(),
@@ -103,6 +106,7 @@ class Sync {
         'chapters': _box.get('stats:chapters') ?? 0,
         'meta': _box.get('stats:meta') ?? const {},
         'days': byAid('stats:days:'),
+        'ch': byAid('stats:ch:'),
       },
     };
   }
@@ -164,6 +168,14 @@ class Sync {
     for (final e in ((remote['rating'] as Map?) ?? const {}).entries) {
       if (((_box.get('rating:${e.key}') as int?) ?? 0) == 0 && (e.value as int) > 0) puts['rating:${e.key}'] = e.value;
     }
+    for (final e in ((remote['vrate'] as Map?) ?? const {}).entries) {
+      if (e.value is! Map) continue;
+      final local = Map<String, int>.from(((_box.get('vrate:${e.key}') as Map?) ?? const {}).map((k, v) => MapEntry('$k', v as int)));
+      for (final vr in (e.value as Map).entries) {
+        if ((local['${vr.key}'] ?? 0) == 0 && (vr.value as int) > 0) local['${vr.key}'] = vr.value as int;
+      }
+      if (local.isNotEmpty) puts['vrate:${e.key}'] = local;
+    }
 
     // 规则：按编号并集，同一条取修改时间较新的；备注：并集，本机优先
     int ts(Map r) => (r['ts'] as int?) ?? 0;
@@ -189,12 +201,26 @@ class Sync {
     // 统计：单独存放
     puts['sync:stats:${remote['device']}'] = jsonEncode(remote['stats']);
     await _box.putAll(puts);
+    for (final aid in ((remote['read'] as Map?) ?? const {}).keys) {
+      await Volumes.refreshDone('$aid');
+    }
   }
 
   /// 其他设备的统计（设备 → 内容），统计页把它们加到本机数据上。
+  /// 统计页一次构建要调用几百次：原文没变就复用解码结果（只读，调用方不要改）。
   static Iterable<Map<String, dynamic>> otherStats() => [
-    for (final k in _keys('sync:stats:')) Map<String, dynamic>.from(jsonDecode(_box.get(k) as String) as Map),
+    for (final k in _keys('sync:stats:')) _decodeStats(k, _box.get(k) as String),
   ];
+
+  static final _statsCache = <String, (String, Map<String, dynamic>)>{};
+
+  static Map<String, dynamic> _decodeStats(String key, String raw) {
+    final hit = _statsCache[key];
+    if (hit != null && hit.$1 == raw) return hit.$2;
+    final m = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    _statsCache[key] = (raw, m);
+    return m;
+  }
 
   /// 导入备份文件（别的设备或本机导出的快照）：规则同同步；返回 false 表示这是本机自己导出的。
   static Future<bool> importBackup(String json) async {
@@ -210,10 +236,18 @@ class Sync {
 
   static String _dir() => '${url.endsWith('/') ? url : '$url/'}${Uri.encodeComponent(folder)}/';
 
+  static String _decodeHref(String s) {
+    try {
+      return Uri.decodeFull(s);
+    } catch (_) {
+      return s;
+    }
+  }
+
   /// 目录里所有 `*.json` 的文件名（PROPFIND 的返回里取 href）。
   static List<String> parseListing(String xml) => [
     for (final m in RegExp(r'<(?:\w+:)?href>([^<]+)</(?:\w+:)?href>', caseSensitive: false).allMatches(xml))
-      if (Uri.decodeFull(m.group(1)!).endsWith('.json')) Uri.decodeFull(m.group(1)!).split('/').last,
+      if (_decodeHref(m.group(1)!) case final href when href.endsWith('.json') && !href.endsWith('/')) href.split('/').last,
   ];
 
   static void _ok(Response r, String what) {
@@ -224,46 +258,53 @@ class Sync {
   /// 测试连接：目录不存在就建出来。
   static Future<void> test() async {
     final dio = _dio(await password());
-    final r = await dio.request(_dir(), options: Options(method: 'PROPFIND', headers: {'Depth': '0'}));
-    if (r.statusCode == 404) {
-      _ok(await dio.request(_dir(), options: Options(method: 'MKCOL')), '创建同步文件夹');
-    } else {
-      _ok(r, '连接');
+    try {
+      final r = await dio.request(_dir(), options: Options(method: 'PROPFIND', headers: {'Depth': '0'}));
+      if (r.statusCode == 404) {
+        _ok(await dio.request(_dir(), options: Options(method: 'MKCOL')), '创建同步文件夹');
+      } else {
+        _ok(r, '连接');
+      }
+    } finally {
+      dio.close();
     }
-  }
-
-  /// 完整同步一次：上传本机快照，读取并合并其他设备的快照。返回合并了几台设备。
-  static Future<int> run() async {
-    final dio = _dio(await password());
-    await test();
-    final put = await dio.put('${_dir()}$deviceId.json', data: jsonEncode(snapshot()), options: Options(contentType: 'application/json; charset=utf-8'));
-    _ok(put, '上传');
-    final list = await dio.request(_dir(), options: Options(method: 'PROPFIND', headers: {'Depth': '1'}, responseType: ResponseType.plain));
-    _ok(list, '读取目录');
-    var merged = 0;
-    for (final name in parseListing(list.data as String)) {
-      if (name == '$deviceId.json') continue;
-      final r = await dio.get('${_dir()}${Uri.encodeComponent(name)}', options: Options(responseType: ResponseType.plain));
-      _ok(r, '下载 $name');
-      await merge(jsonDecode(r.data as String) as Map<String, dynamic>);
-      merged++;
-    }
-    await _box.put('sync:last', DateTime.now().millisecondsSinceEpoch);
-    return merged;
   }
 
   static bool _running = false;
 
+  /// 完整同步一次：上传本机快照，读取并合并其他设备的快照。返回合并了几台设备。
+  static Future<int> run() async {
+    if (_running) throw '正在同步，请稍候';
+    _running = true;
+    final dio = _dio(await password());
+    try {
+      await test();
+      final put = await dio.put('${_dir()}$deviceId.json', data: jsonEncode(snapshot()), options: Options(contentType: 'application/json; charset=utf-8'));
+      _ok(put, '上传');
+      final list = await dio.request(_dir(), options: Options(method: 'PROPFIND', headers: {'Depth': '1'}, responseType: ResponseType.plain));
+      _ok(list, '读取目录');
+      var merged = 0;
+      for (final name in parseListing(list.data as String)) {
+        if (name == '$deviceId.json') continue;
+        final r = await dio.get('${_dir()}${Uri.encodeComponent(name)}', options: Options(responseType: ResponseType.plain));
+        _ok(r, '下载 $name');
+        await merge(jsonDecode(r.data as String) as Map<String, dynamic>);
+        merged++;
+      }
+      await _box.put('sync:last', DateTime.now().millisecondsSinceEpoch);
+      return merged;
+    } finally {
+      dio.close();
+      _running = false;
+    }
+  }
+
   /// 自动同步用：没配置、正在同步、距上次不到 [minGap] 就跳过；出错不打扰用户。
   static Future<void> auto({Duration minGap = const Duration(minutes: 3)}) async {
     if (!configured || _running || DateTime.now().millisecondsSinceEpoch - lastSync < minGap.inMilliseconds) return;
-    _running = true;
     try {
       await run();
-    } catch (_) {
-    } finally {
-      _running = false;
-    }
+    } catch (_) {}
   }
 }
 
