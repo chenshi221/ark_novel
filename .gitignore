@@ -48,3 +48,7 @@ app.*.map.json
 # 打包产物不入库（上游禁止公开分发）
 /apk/
 *.apk
+
+# 本机开发信息（路径、设备等），不入库
+AGENTS.local.md
+CLAUDE.local.md

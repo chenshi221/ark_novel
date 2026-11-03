@@ -1,14 +1,54 @@
-name: Check (analyze + test)
+name: Check
 
+# 仓库公开，这里只检查能编译，不上传安装包
 on:
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      platforms: ${{ steps.platforms.outputs.platforms }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Require a release commit for app changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # 应用代码变了却没有 fix:/feat: 提交，release-please 就不会发版
+          if git diff --name-only "$BASE...$HEAD" | grep -qE '^(lib|android|macos|windows|assets)/' \
+            && ! git log --format=%s "$BASE..$HEAD" | grep -qE '^(feat|fix)(\(.+\))?!?: '; then
+            echo "::error::改了应用代码，至少要有一个 fix: 或 feat: 开头的提交"
+            exit 1
+          fi
+
+      - name: Decide which platforms to build
+        id: platforms
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # 手动运行时编译全部平台；PR 只编译改动涉及的平台，依赖变了才全编
+          platforms=android,macos,windows
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            files=$(git diff --name-only "$BASE...$HEAD")
+            if ! grep -qx pubspec.lock <<<"$files"; then
+              platforms=
+              grep -qE '^(lib|assets|android)/' <<<"$files" && platforms+=android,
+              grep -q '^macos/' <<<"$files" && platforms+=macos,
+              grep -q '^windows/' <<<"$files" && platforms+=windows,
+            fi
+          fi
+          echo "platforms=$platforms" | tee -a "$GITHUB_OUTPUT"
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.4'
@@ -16,6 +56,51 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Analyze
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        run: flutter analyze
       - name: Test
         run: flutter test
+
+  build:
+    name: build (${{ matrix.platform }})
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            os: ubuntu-latest
+            args: apk --release --target-platform android-arm64 --dart-define=cronetHttpNoPlay=true
+          - platform: windows
+            os: windows-2022 # windows-latest 的 VS 2026 编不过 flutter_inappwebview_windows（STL1011）
+            args: windows --release
+          - platform: macos
+            os: macos-latest
+            args: macos --release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    # 保护规则要求这些任务都有结果，所以跳过步骤而不是跳过任务
+    steps:
+      - uses: actions/checkout@v7
+        if: contains(needs.check.outputs.platforms, matrix.platform)
+
+      - uses: actions/setup-java@v6
+        if: matrix.platform == 'android' && contains(needs.check.outputs.platforms, matrix.platform)
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        if: contains(needs.check.outputs.platforms, matrix.platform)
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+
+      # flutter_inappwebview_macos 用 Swift Package Manager 编译会报错，改用 CocoaPods
+      - if: matrix.platform == 'macos' && contains(needs.check.outputs.platforms, matrix.platform)
+        run: flutter config --no-enable-swift-package-manager
+
+      - name: Build
+        if: contains(needs.check.outputs.platforms, matrix.platform)
+        run: flutter build ${{ matrix.args }} -t lib/next/main.dart
