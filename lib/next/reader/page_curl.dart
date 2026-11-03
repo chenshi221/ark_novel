@@ -29,7 +29,7 @@ class PageCurlController {
 ///
 /// 往回翻不卷页：上一页从左边水平滑进来，盖在当前页上（和常见阅读器一致）。
 class PageCurl extends StatefulWidget {
-  const PageCurl({super.key, this.debugT, this.debugDir = 1, this.debugCorner = 1, this.cover = false, this.dual = false, required this.pageCount, required this.pageBuilder, required this.initialIndex, required this.background, this.controller, this.onIndexChanged, this.onReachStart, this.onReachEnd});
+  const PageCurl({super.key, this.debugT, this.debugDir = 1, this.debugCorner = 1, this.cover = false, this.dual = false, required this.pageCount, this.firstIndex = 0, required this.pageBuilder, required this.initialIndex, required this.background, this.controller, this.onIndexChanged, this.onReachStart, this.onReachEnd});
 
   /// 仅用于 tool/curl_demo.dart 目测：把折叠状态固定在进度 [debugT]（方向 [debugDir]，折角在高度的 [debugCorner] 处）
   final double? debugT;
@@ -42,7 +42,9 @@ class PageCurl extends StatefulWidget {
   /// 宽屏双页：以屏幕正中竖轴（左右两页之间的书脊）为轴翻页。
   final bool dual;
 
+  /// 页码范围是 [firstIndex] 到 [pageCount] - 1：跨章时 -1 是上一章的那一屏
   final int pageCount;
+  final int firstIndex;
 
   /// [live] 为 true 表示这是静止时显示的那一页（可以选字）；翻页动画中同一页会被画几次，此时为 false。
   final Widget Function(BuildContext context, int index, bool live) pageBuilder;
@@ -59,7 +61,7 @@ class PageCurl extends StatefulWidget {
 
 class _PageCurlState extends State<PageCurl> with SingleTickerProviderStateMixin {
   late final AnimationController _anim = AnimationController(vsync: this)..addListener(_tick);
-  late int _index = widget.initialIndex.clamp(0, math.max(0, widget.pageCount - 1));
+  late int _index = widget.initialIndex.clamp(widget.firstIndex, math.max(widget.firstIndex, widget.pageCount - 1));
 
   /// 当前翻页方向：1 往后翻（第 _index 页翻走），-1 往回翻（第 _index-1 页翻回来），0 静止
   int _dir = 0;
@@ -87,7 +89,7 @@ class _PageCurlState extends State<PageCurl> with SingleTickerProviderStateMixin
   @override
   void didUpdateWidget(PageCurl old) {
     super.didUpdateWidget(old);
-    if (widget.pageCount != old.pageCount) _index = _index.clamp(0, math.max(0, widget.pageCount - 1));
+    if (widget.pageCount != old.pageCount || widget.firstIndex != old.firstIndex) _index = _index.clamp(widget.firstIndex, math.max(widget.firstIndex, widget.pageCount - 1));
   }
 
   @override
@@ -97,7 +99,7 @@ class _PageCurlState extends State<PageCurl> with SingleTickerProviderStateMixin
   }
 
   bool get _canNext => _index < widget.pageCount - 1;
-  bool get _canPrev => _index > 0;
+  bool get _canPrev => _index > widget.firstIndex;
 
   void _tick() {
     setState(() => _t = _from + (_to - _from) * _curve.transform(_anim.value));
@@ -430,7 +432,7 @@ class _FlapShade extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final dir = -f.n; // 从折线进入纸背的方向
-    canvas.drawRect(Offset.zero & size, Paint()..shader = _along(f.m, dir, 46, [Colors.black.withValues(alpha: dark ? 0.35 : 0.22), Colors.white.withValues(alpha: dark ? 0.04 : 0.16), Colors.transparent], const [0, 0.35, 1]));
+    canvas.drawRect(Offset.zero & size, Paint()..shader = _along(f.m, dir, 46, [Colors.black.withValues(alpha: dark ? 0.35 : 0.22), Colors.transparent]));
   }
 
   @override

@@ -81,13 +81,17 @@ class VolumeStack extends StatelessWidget {
 /// 停在的卷不是第一卷时封面在飞行中自然换过去。
 Widget volumeHeroShuttle(BuildContext context, Animation<double> animation, HeroFlightDirection direction, BuildContext from, BuildContext to) {
   final (shelf, carousel) = direction == HeroFlightDirection.push ? (from, to) : (to, from);
-  return Stack(
-    fit: StackFit.expand,
-    clipBehavior: Clip.none, // 书架那叠后面几卷的边在范围外面
-    children: [
-      (shelf.widget as Hero).child,
-      FadeTransition(opacity: animation, child: (carousel.widget as Hero).child),
-    ],
+  // 飞行时在 Overlay 里，没有 Material 的话「在读」标签会带上默认的黄色双下划线
+  return Material(
+    type: MaterialType.transparency,
+    child: Stack(
+      fit: StackFit.expand,
+      clipBehavior: Clip.none, // 书架那叠后面几卷的边在范围外面
+      children: [
+        (shelf.widget as Hero).child,
+        FadeTransition(opacity: animation, child: (carousel.widget as Hero).child),
+      ],
+    ),
   );
 }
 

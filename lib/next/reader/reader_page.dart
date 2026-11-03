@@ -100,7 +100,8 @@ Future<(int, int)?> bookmarkPage(WidgetRef ref, BuildContext context, String aid
   final total = starts.length + c.images.length;
   if (total == 0) return null;
   final page = offset > c.text.length ? math.min(starts.length + offset - c.text.length - 1, total - 1) : (starts.isEmpty ? 0 : pageOfOffset(starts, offset));
-  return (page ~/ cols + 1, (total + cols - 1) ~/ cols);
+  final cover = cols == 2 && Volumes.of(aid).any((v) => v.cids.firstOrNull == cid) ? 1 : 0; // 双页时卷首多一页封面
+  return ((page + cover) ~/ cols + 1, (total + cover + cols - 1) ~/ cols);
 }
 
 class _Palette {
@@ -181,6 +182,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   late final Set<String> _doneAtOpen;
   final _celebrated = <String>{};
   int _dir = 1; // 上次换章的方向：1 往后，-1 往前（换章动画往哪边滑）
+  int _lead = 0; // 这章第一屏的左页是不是留给上一章（见 PagedBody.lead）
+  bool _seamless = false; // 这次换章是翻页翻过来的，不放换章动画
   int _offset = 0; // 当前读到的字符偏移
   Object? _shown; // 正文第一次显示的标记 (cid, epoch)，用来在那一刻初始化 _offset
   int? _initial; // 从书签进来时的起点，只用一次
@@ -254,6 +257,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   // ---- 音量键翻页：安卓原生那边拦下音量键后通过这个通道回调 ----
   static const _vol = MethodChannel('ark/reader_volume_keys');
   bool _volOn = false;
+  DateTime _volTurn = DateTime(0);
 
   /// 开着、而且不在朗读时才拦音量键（朗读时让它调音量）；只在状态变化时通知原生。
   void _syncVolumeKeys(bool want) {
@@ -268,6 +272,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     super.initState();
     _vol.setMethodCallHandler((call) async {
       final inv = ref.read(readerPrefsProvider).volumeInvert;
+      // 长按：系统连发得很快，隔一段才翻一页，动画才放得完；菜单、弹窗开着时不连翻
+      final now = DateTime.now();
+      if (call.arguments == true && (_bar || !(ModalRoute.of(context)?.isCurrent ?? true) || now.difference(_volTurn) < const Duration(milliseconds: 300))) return;
+      _volTurn = now;
       // 菜单开着时按音量键先只收起菜单，再按才翻页
       if (_bar && (call.method == 'volumeUp' || call.method == 'volumeDown')) return _toggleBar();
       if (call.method == (inv ? 'volumeUp' : 'volumeDown')) _nav.next?.call();
@@ -488,7 +496,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
 
   /// 跳到某章的某个位置。[offset] 默认章首；往前翻章时传 [kToEnd]，落在上一章的最后一页。
   /// 手动切章会停掉朗读（[keepTts] 是朗读自己读完一章后的自动续读）；往后翻时把离开的这章标为已读。
-  void _go(String cid, {int offset = 0, bool keepTts = false}) {
+  /// [lead] 和 [seamless] 是从正文翻进相邻章节时用的：画面已经翻到位了，不再放换章动画。
+  void _go(String cid, {int offset = 0, bool keepTts = false, int lead = 0, bool seamless = false}) {
     if (cid == _cid && offset == _offset) return;
     if (cid != _cid && ref.read(readerPrefsProvider).chapterToast) {
       final t = ref.read(novelProvider(widget.aid)).value?.catalogue.expand((v) => v.chapters).where((c) => c.cid == cid).firstOrNull?.title;
@@ -506,6 +515,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     if (finished != null) WidgetsBinding.instance.addPostFrameCallback((_) => _celebrate(finished, hasNext: true));
     setState(() {
       if (cid != _cid) _dir = order.indexOf(cid) >= order.indexOf(_cid) ? 1 : -1;
+      _lead = lead;
+      _seamless = seamless;
       _offset = offset == kToEnd ? 0 : offset;
       _pos.value = _offset;
       _cid = cid;
@@ -544,7 +555,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     if (!prefs.pageAnim) return child;
     return ClipRect(
       child: AnimatedSwitcher(
-        duration: Duration(milliseconds: prefs.mode == 0 ? 220 : 300),
+        duration: _seamless ? Duration.zero : Duration(milliseconds: prefs.mode == 0 ? 220 : 300),
         switchInCurve: Curves.easeOutCubic,
         switchOutCurve: Curves.easeInCubic,
         layoutBuilder: (current, previous) => Stack(fit: StackFit.expand, children: [...previous, ?current]),
@@ -553,7 +564,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
           final incoming = c.key == ValueKey(_cid);
           // 离开的那章动画从 1 倒着走到 0，所以终点写在 begin 上
           final from = Offset(incoming ? _dir.toDouble() : -_dir.toDouble(), 0);
-          return SlideTransition(position: Tween(begin: from, end: Offset.zero).animate(a), child: IgnorePointer(ignoring: !incoming, child: c));
+          // 结构不能随 _seamless 变，不然正文会被重建
+          final position = _seamless ? const AlwaysStoppedAnimation(Offset.zero) : Tween(begin: from, end: Offset.zero).animate(a);
+          return SlideTransition(position: position, child: IgnorePointer(ignoring: !incoming, child: c));
         },
         child: child,
       ),
@@ -561,10 +574,20 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   }
 
   /// 本卷进度：前面的章按读完算，加上这章读到的比例 [f]，每章一样重。找不到所在的卷时就是本章进度。
-  double _volumeProgress(double f) {
-    final v = Volumes.of(widget.aid).where((v) => v.cids.contains(_cid)).firstOrNull;
+  double _volumeProgress(double f, [String? cid]) {
+    cid ??= _cid;
+    final v = Volumes.of(widget.aid).where((v) => v.cids.contains(cid)).firstOrNull;
     if (v == null) return f;
-    return (v.cids.indexOf(_cid) + f) / v.cids.length;
+    return (v.cids.indexOf(cid) + f) / v.cids.length;
+  }
+
+  /// 这章是一卷的第一章时，那一卷的封面（宽屏双页才用）
+  String? _coverOf(String cid, ReaderPrefs prefs, String fallback) {
+    if (!prefs.dual || MediaQuery.sizeOf(context).width < 900) return null;
+    final v = Volumes.of(widget.aid).where((v) => v.cids.firstOrNull == cid).firstOrNull;
+    if (v == null) return null;
+    final url = ref.read(volumeCoverQueueProvider).volCover(widget.aid, v, fallback);
+    return url.isEmpty ? null : url;
   }
 
   /// 正文读到底：受限章节只有一句说明，一打开就“到底”了，不算读过；往后翻过去时 [_go] 照常标记。
@@ -814,10 +837,23 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
         if (_preloaded.add(ahead.cid)) {
           Future.microtask(() async {
             // 只在 Wi-Fi 下预加载：现在不是就先不加载，以后再翻到这章时重新判断
-            if (prefs.prefetchWifi && !await onWifi()) return _preloaded.remove(ahead.cid);
-            if (mounted) ref.read(chapterProvider((widget.aid, ahead.cid)));
+            if (prefs.prefetchWifi && !await onWifi()) {
+              _preloaded.remove(ahead.cid);
+              return;
+            }
+            if (!mounted) return;
+            final loaded = ref.read(chapterProvider((widget.aid, ahead.cid)).future);
+            setState(() {}); // 让正文拿到下一章，翻过去时接得上
+            try {
+              final images = (await loaded).images;
+              if (mounted && images.isNotEmpty && !isWebPreview && _imagesQueued.add(ahead.cid)) ref.read(imageStoreProvider).prefetch(images);
+            } catch (_) {} // 真翻到这章时会再报错
           });
         }
+      }
+      if (prefs.prefetch > 0 && prefs.prefetchBook && !_bookQueued && !isWebPreview) {
+        _bookQueued = true;
+        Future.microtask(() => _cacheBook(chapters, index, wifiOnly: prefs.prefetchWifi));
       }
     }
 
@@ -862,6 +898,22 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
               final heading = _headingAccent(context, prefs, palette);
               final key = ValueKey((_cid, _epoch, prefs.mode, prefs.font, prefs.fontSize, prefs.lineHeight, prefs.margin, c.marks.length, c.text.length));
               void onMark(Mark m) => _editNote(m.rule);
+              final fallbackCover = novel?.detail.imgUrl ?? '';
+              // 相邻章节：有缓存、或者预加载已经取了才接上，不为这个多联网（预加载关了、不在 Wi-Fi 时就还是原来的换章动画）
+              ChapterPeek? peek(CatChapter? ch) {
+                if (ch == null) return null;
+                final p = chapterProvider((widget.aid, ch.cid));
+                if (!ChapterCache.has(widget.aid, ch.cid) && !ref.exists(p)) return null;
+                final v = ref.watch(p).value;
+                if (v == null) return null;
+                return ChapterPeek(
+                  chapter: v,
+                  title: ch.title,
+                  spanOf: (from, to) => buildSpan(v, from, to, style, noted),
+                  cover: _coverOf(ch.cid, prefs, fallbackCover),
+                  volumeProgress: (f) => _volumeProgress(f, ch.cid),
+                );
+              }
               return prefs.mode == 0
                   ? ScrollBody(
                       key: key,
@@ -897,6 +949,12 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       margin: prefs.margin,
                       title: title,
                       headingAccent: heading,
+                      prevChapter: peek(prev),
+                      nextChapter: peek(next),
+                      volumeCover: _coverOf(_cid, prefs, fallbackCover),
+                      lead: _lead,
+                      arrivedBack: _seamless && _dir < 0,
+                      onTurn: (dir, lead, offset) => _go(dir > 0 ? next!.cid : prev!.cid, offset: offset, lead: lead, seamless: true),
                       curl: prefs.mode >= 2,
                       cover: prefs.mode == 3,
                       dual: prefs.dual,
@@ -1114,6 +1172,28 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
 
   final _preloaded = <String>{};
   final _imagesQueued = <String>{}; // 已经把插图排进下载队列的章节
+  bool _bookQueued = false;
+
+  /// 后台把整本的正文存到离线缓存（不含插图），一章一章慢慢取；先往后，再补前面。退出阅读器就停，下次打开接着来。
+  Future<void> _cacheBook(List<CatChapter> chapters, int index, {required bool wifiOnly}) async {
+    final api = ref.read(apiProvider);
+    if (wifiOnly && !await onWifi()) return;
+    for (final c in [...chapters.skip(index + 1), ...chapters.take(index)]) {
+      if (!mounted || Incognito.on) return;
+      if (ChapterCache.has(widget.aid, c.cid)) continue;
+      final ticket = ChapterCache.ticket(widget.aid, c.cid);
+      try {
+        final raw = await api.chapter(widget.aid, c.cid);
+        if (!mounted || Incognito.on) return;
+        await ChapterCache.put(widget.aid, c.cid, raw, ticket: ticket);
+      } on ChapterLockedException {
+        continue; // 受限书取不到的章（插图），跳过
+      } catch (_) {
+        return; // 断网或被限流：不重试，下次打开再说
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    }
+  }
 
   /// 目录（按卷分层，当前章所在的卷默认展开）、本书的书签、人物备注。
   void _showCatalogue(List<CatVolume> volumes, String current) {

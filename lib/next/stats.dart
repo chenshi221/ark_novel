@@ -99,6 +99,26 @@ class ReadingStats {
       if (chapterSeconds(aid).values.expand((d) => d.entries).where((e) => inDay(e.key)).fold(0, (a, e) => a + e.value) case final s when s > 0) aid: s,
   };
 
+  /// 删掉一本书的阅读记录，同步时其他设备也删。累计章数没有按书记，不变。
+  static Future<void> deleteBook(String aid) async {
+    await purgeLocal(aid);
+    await Sync.forgetBookStats(aid);
+  }
+
+  /// 删掉本机记的这本书。每天的时长只能减去按章记过的部分（这个功能加上之前的不知道属于哪本书）。
+  static Future<void> purgeLocal(String aid) async {
+    final day = _map('stats:day');
+    for (final days in _localChapterSeconds(aid).values) {
+      for (final e in days.entries) {
+        final left = (day[e.key] ?? 0) - e.value;
+        left > 0 ? day[e.key] = left : day.remove(e.key);
+      }
+    }
+    final meta = Map.of((_box.get('stats:meta') as Map?) ?? const {})..remove(aid);
+    await _box.putAll({'stats:day': day, 'stats:book': _map('stats:book')..remove(aid), 'stats:meta': meta});
+    await _box.deleteAll(['stats:days:$aid', 'stats:ch:$aid']);
+  }
+
   static Future<void> addSeconds(String aid, int seconds, {String? cid}) async {
     if (seconds <= 0 || Incognito.on) return;
     final today = dayKey(DateTime.now());
