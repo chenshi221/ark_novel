@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.2](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.0.1...ark_novel-v1.0.2) (2026-11-03)
+
+
+### Features
+
+* 同步移出的书在本机读过时提示加回书架 ([edbe6c5](https://github.com/chenshi221/ark_novel/commit/edbe6c51ff2a4cdae09ae49876c59b713a19faa1))
+* 同步移出的书在本机读过时提示加回书架 ([ea3d8dc](https://github.com/chenshi221/ark_novel/commit/ea3d8dca268af80aae829e3a99668d6bfc6493ab))
+
 ## [1.0.1](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.0.0...ark_novel-v1.0.1) (2026-11-03)
 
 
