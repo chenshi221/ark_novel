@@ -50,7 +50,7 @@ jobs:
             os: ubuntu-latest
             args: apk --release --target-platform android-arm64 --dart-define=cronetHttpNoPlay=true
           - platform: windows
-            os: windows-latest
+            os: windows-2022 # windows-latest 的 VS 2026 编不过 flutter_inappwebview_windows（STL1011）
             args: windows --release
           - platform: macos
             os: macos-latest
@@ -71,6 +71,10 @@ jobs:
           flutter-version: '3.47.4'
           channel: stable
           cache: true
+
+      # flutter_inappwebview_macos 用 Swift Package Manager 编译会报错，改用 CocoaPods
+      - if: matrix.platform == 'macos'
+        run: flutter config --no-enable-swift-package-manager
 
       - name: Build
         run: flutter build ${{ matrix.args }} -t lib/next/main.dart
