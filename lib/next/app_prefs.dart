@@ -15,7 +15,7 @@ class AppPrefs extends Notifier<int> {
   /// 存的是列表时按字符串列表读（Hive 读出来是 `List<dynamic>`）
   static List<String> readList(String key) => ((_box.get('p.$key') as List?) ?? const []).cast<String>();
 
-  static Future<void> write(String key, Object? value) => _box.put('p.$key', value);
+  static Future<void> write(String key, Object? value) => _box.putAll({'p.$key': value, ?_syncGroup(key): DateTime.now().millisecondsSinceEpoch});
 
   /// 「书籍解锁」入口是否已显示：默认隐藏，在「关于」里连点版本号 7 次后出现（和安卓开发者模式一样）。
   static bool get unlockEntry => read(P.unlockShown, true);
@@ -26,10 +26,18 @@ class AppPrefs extends Notifier<int> {
   T get<T>(String key, T fallback) => read(key, fallback);
 
   void set(String key, Object? value) {
-    _box.put('p.$key', value);
-    _box.put('sync:prefsTs', DateTime.now().millisecondsSinceEpoch);
+    write(key, value);
     state++;
   }
+
+  /// 这个设置属于哪组可选同步（改了就更新那组的时间）；不跨设备同步的返回 null。
+  static String? _syncGroup(String key) => switch (key) {
+    P.colsPortrait || P.colsLandscape || P.lastTab => null,
+    P.volumeDone => 'sync:readerTs',
+    _ when key.startsWith('shelf.') || key.startsWith('upd.') => 'sync:prefsTs',
+    _ when key.startsWith('ui.') => 'sync:appearanceTs',
+    _ => null,
+  };
 }
 
 final appPrefsProvider = NotifierProvider<AppPrefs, int>(AppPrefs.new);

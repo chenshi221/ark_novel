@@ -105,7 +105,15 @@ class SessionStore {
     final user = _box.get('savedUser') as String?;
     if (user == null) return null;
     if (_useLocalPass) {
-      final pass = _box.get('savedPass') as String?;
+      var pass = _box.get('savedPass') as String?;
+      if (pass == null && _box.get('savedPassMoved') != true) {
+        // 旧版存在钥匙串里的搬过来，只试一次，免得反复弹窗
+        await _box.put('savedPassMoved', true);
+        try {
+          pass = await _secure.read(key: 'savedPass');
+          if (pass != null) await _box.put('savedPass', pass);
+        } catch (_) {}
+      }
       return pass == null ? null : (user, pass);
     }
     try {

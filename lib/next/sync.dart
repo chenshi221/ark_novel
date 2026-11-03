@@ -11,8 +11,8 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'app_prefs.dart';
+import 'avatar.dart';
 import 'library.dart';
-import 'pages/profile_page.dart';
 import 'settings.dart';
 import 'updates.dart';
 import 'volumes.dart';
@@ -50,7 +50,19 @@ class Sync {
 
   /// 应用密码：安卓/iOS 放系统安全存储；Mac 版（无开发者证书签名访问钥匙串会反复弹窗要密码）直接存沙盒本地库。
   static Future<String> password() async {
-    if (_useLocalPass) return (_box.get('sync:pass') as String?) ?? '';
+    if (_useLocalPass) {
+      final local = _box.get('sync:pass') as String?;
+      if (local != null || _box.get('sync:passMoved') == true) return local ?? '';
+      // 旧版存在钥匙串里的搬过来，只试一次，免得反复弹窗
+      await _box.put('sync:passMoved', true);
+      try {
+        final old = await _secure.read(key: 'syncPass');
+        if (old != null) await _box.put('sync:pass', old);
+        return old ?? '';
+      } catch (_) {
+        return '';
+      }
+    }
     try {
       final p = await _secure.read(key: 'syncPass');
       if (p != null) return p;
@@ -102,24 +114,41 @@ class Sync {
 
   static Iterable<String> _keys(String prefix) => _box.keys.whereType<String>().where((k) => k.startsWith(prefix));
 
+  /// 书架和更新偏好里跨设备同步的：列数、上次停在的标签各设备自己的。
+  static bool _isShelfPref(String k) => (k.startsWith('p.shelf.') || k.startsWith('p.upd.')) && !{P.colsPortrait, P.colsLandscape, P.lastTab}.any((x) => k == 'p.$x');
+
+  /// 头像图片不进快照：单独传成 `<设备ID>.avatar`，变了才传；快照里只记时间和文件名。
   static Map<String, dynamic>? _avatarSnapshot() {
     if (kIsWeb || !AppPrefs.read(P.syncAvatar, true)) return null;
     final path = _box.get('avatar') as String?;
     final ts = _box.get('avatar:ts') as int?;
     if (path != null && path.isNotEmpty) {
       final file = File(path);
-      if (file.existsSync()) {
-        try {
-          return {
-            'ts': ts ?? file.lastModifiedSync().millisecondsSinceEpoch,
-            'ext': p.extension(path),
-            'data': base64Encode(file.readAsBytesSync()),
-          };
-        } catch (_) {}
-      }
+      if (file.existsSync()) return {'ts': ts ?? file.lastModifiedSync().millisecondsSinceEpoch, 'ext': p.extension(path), 'file': '$deviceId.avatar'};
     }
-    if (ts != null) return {'ts': ts, 'data': null};
-    return null;
+    return ts == null ? null : {'ts': ts};
+  }
+
+  static Future<void> _pushAvatar(Dio dio) async {
+    final a = _avatarSnapshot();
+    if (a == null || a['file'] == null || _box.get('sync:avatarUp') == a['ts']) return;
+    final bytes = await File(_box.get('avatar') as String).readAsBytes();
+    _ok(await dio.put('${_dir()}${a['file']}', data: Stream.fromIterable([bytes]), options: Options(contentType: 'application/octet-stream', headers: {Headers.contentLengthHeader: bytes.length})), '上传头像');
+    await _box.put('sync:avatarUp', a['ts']);
+  }
+
+  /// 对方的头像比本机新才下载，放进快照交给 [merge]；下载失败就当没变，下次再试。
+  static Future<void> _pullAvatar(Dio dio, Map<String, dynamic> remote) async {
+    final a = remote['avatar'];
+    if (kIsWeb || !AppPrefs.read(P.syncAvatar, true) || a is! Map || a['file'] is! String) return;
+    if (((a['ts'] as int?) ?? 0) <= ((_box.get('avatar:ts') as int?) ?? 0)) return;
+    try {
+      final r = await dio.get<List<int>>('${_dir()}${Uri.encodeComponent(p.basename(a['file'] as String))}', options: Options(responseType: ResponseType.bytes));
+      _ok(r, '下载头像');
+      a['data'] = base64Encode(r.data!);
+    } catch (_) {
+      remote.remove('avatar');
+    }
   }
 
   /// 本机要同步的数据（不含从别的设备并入的统计）。
@@ -146,6 +175,7 @@ class Sync {
       'shelfOrder': byAid('shelfOrder:'),
       'vcover': byAid('vcover2:'),
       'vpick': byAid('vpick:'),
+      'vpickTs': byAid('vpickTs:'),
       'vols': byAid('vols:'),
       'updates': {
         'feed': _box.get('updates') ?? const [],
@@ -159,7 +189,7 @@ class Sync {
         'shelfOpts': _box.get('shelfOpts'),
         'p': {
           for (final k in _keys('p.'))
-            if ((k.startsWith('p.shelf.') || k.startsWith('p.upd.')) && k != 'p.${P.colsPortrait}' && k != 'p.${P.colsLandscape}') k: _box.get(k),
+            if (_isShelfPref(k)) k: _box.get(k),
         },
       },
       'readerPrefs': {
@@ -168,7 +198,7 @@ class Sync {
         'volumeDone': _box.get('p.${P.volumeDone}'),
       },
       'appearance': {
-        'ts': (_box.get('sync:appearanceTs') as int?) ?? (_box.get('sync:prefsTs') as int?) ?? 0,
+        'ts': (_box.get('sync:appearanceTs') as int?) ?? 0,
         'themeMode': _box.get('themeMode'),
         'palette': _box.get('palette'),
         'p': {for (final k in _keys('p.ui.')) k: _box.get(k)},
@@ -273,6 +303,7 @@ class Sync {
 
     // 书架分类（例如"在追"）与书架书籍（含重命名 name、所属分类 cats）
     final catIdMap = <String, String>{};
+    final localCatMap = <String, String>{}; // 本机分类换了 id：旧 → 新
     if (remote['cats'] != null || remote['books'] != null) {
       final cats = _maps(_box.get('lib:cats')).where((c) => !dead('cat:${c['id']}', ts(c))).toList();
       for (final r in _maps(remote['cats'])) {
@@ -286,7 +317,14 @@ class Sync {
         } else {
           final byName = cats.indexWhere((c) => c['name'] == rName);
           if (byName >= 0) {
-            catIdMap[rId] = '${cats[byName]['id']}';
+            // 同名分类两边统一成同一个 id（取较小的），之后改名、删除才能跨设备对上
+            final lId = '${cats[byName]['id']}';
+            if (rId.compareTo(lId) < 0) {
+              cats[byName] = {...cats[byName], 'id': rId};
+              localCatMap[lId] = rId;
+            } else {
+              catIdMap[rId] = lId;
+            }
           } else {
             cats.add({'id': rId, 'name': rName, 'ts': rTs});
           }
@@ -299,6 +337,7 @@ class Sync {
       for (final e in ((_box.get('lib:books') as Map?) ?? const {}).entries) {
         final aid = '${e.key}';
         final b = Map<String, dynamic>.from(e.value as Map);
+        b['cats'] = {for (final c in ((b['cats'] as List?) ?? const []).cast<String>()) localCatMap[c] ?? c}.toList();
         final bTime = max((b['added'] as int?) ?? 0, (b['ts'] as int?) ?? 0);
         if (!dead('lib:$aid', bTime)) localBooks[aid] = b;
       }
@@ -349,14 +388,16 @@ class Sync {
         }
       }
       puts['lib:books'] = localBooks;
+      await _renameCatRefs(localCatMap, puts);
     }
 
     if (remote['shelfTabOrder'] is List && _box.get('shelfTabOrder') == null) {
       puts['shelfTabOrder'] = [for (final c in (remote['shelfTabOrder'] as List).cast<String>()) catIdMap[c] ?? c];
     }
     for (final e in ((remote['shelfOrder'] as Map?) ?? const {}).entries) {
-      final catKey = catIdMap['${e.key}'] ?? '${e.key}';
-      if (_box.get('shelfOrder:$catKey') == null && e.value is List) {
+      final key = '${e.key}'; // lib:<分类 id>
+      final catKey = key.startsWith('lib:') ? 'lib:${catIdMap[key.substring(4)] ?? key.substring(4)}' : key;
+      if (_box.get('shelfOrder:$catKey') == null && !puts.containsKey('shelfOrder:$catKey') && e.value is List) {
         puts['shelfOrder:$catKey'] = (e.value as List).cast<String>();
       }
     }
@@ -375,27 +416,39 @@ class Sync {
       final rPick = ((rVpick[aid] as List?) ?? const []).cast<String>().toSet();
       final lCover = Map<String, String>.from(((_box.get('vcover2:$aid') as Map?) ?? const {}).map((k, v) => MapEntry('$k', '$v')));
       final rCover = Map<String, String>.from(((rVcover[aid] as Map?) ?? const {}).map((k, v) => MapEntry('$k', '$v')));
-      for (final e in rCover.entries) {
-        final title = e.key, rUrl = e.value;
-        final lUrl = lCover[title];
-        final rManual = rPick.contains(title) || rUrl.contains('#crop=');
-        final lManual = lPick.contains(title) || (lUrl?.contains('#crop=') ?? false);
-        if (rManual && !lManual) {
-          lCover[title] = rUrl;
-          coverChanged = true;
-        } else if (rManual && lManual) {
-          if (lUrl == null || lUrl.isEmpty) {
-            lCover[title] = rUrl;
-            coverChanged = true;
-          }
-        } else if ((lUrl == null || lUrl.isEmpty) && rUrl.isNotEmpty) {
-          lCover[title] = rUrl;
+      final lTime = Map<String, int>.from(((_box.get('vpickTs:$aid') as Map?) ?? const {}).map((k, v) => MapEntry('$k', v as int)));
+      final rTime = Map<String, int>.from((((remote['vpickTs'] as Map?)?[aid] as Map?) ?? const {}).map((k, v) => MapEntry('$k', v as int)));
+      bool manual(Set<String> picks, String title, String? url) => picks.contains(title) || (url?.contains('#crop=') ?? false);
+      // 有一台设备恢复了自动封面：比那次恢复早的手动封面作废，两边都去掉
+      bool reset(Map<String, int> time, String title) => dead('vcover:$aid:$title', time[title] ?? 0);
+      for (final title in lCover.keys.toList()) {
+        if (manual(lPick, title, lCover[title]) && reset(lTime, title)) {
+          lCover.remove(title);
+          lPick.remove(title);
+          lTime.remove(title);
           coverChanged = true;
         }
       }
+      for (final e in rCover.entries) {
+        final title = e.key, rUrl = e.value;
+        final lUrl = lCover[title];
+        if (manual(rPick, title, rUrl) && reset(rTime, title)) continue; // 已作废的手动封面
+        final rManual = manual(rPick, title, rUrl);
+        final lManual = manual(lPick, title, lUrl);
+        final take = rManual
+            ? !lManual || lUrl == null || lUrl.isEmpty || (rTime[title] ?? 0) > (lTime[title] ?? 0)
+            : !lManual && (lUrl == null || lUrl.isEmpty) && rUrl.isNotEmpty;
+        if (take && lUrl != rUrl) {
+          lCover[title] = rUrl;
+          coverChanged = true;
+        }
+        if (rManual && (rTime[title] ?? 0) > (lTime[title] ?? 0)) lTime[title] = rTime[title]!;
+      }
+      rPick.removeWhere((title) => reset(rTime, title));
       final mergedPick = {...lPick, ...rPick};
-      if (lCover.isNotEmpty) puts['vcover2:$aid'] = lCover;
-      if (mergedPick.isNotEmpty) puts['vpick:$aid'] = mergedPick.toList();
+      puts['vcover2:$aid'] = lCover;
+      puts['vpick:$aid'] = mergedPick.toList();
+      if (lTime.isNotEmpty) puts['vpickTs:$aid'] = lTime;
     }
 
     // 更新列表与章节基准（让手机和电脑看到的更新一致）
@@ -431,10 +484,12 @@ class Sync {
       final lTs = (_box.get('avatar:ts') as int?) ?? 0;
       if (rTs > lTs) {
         final data = ra['data'] as String?;
-        if (data != null && data.isNotEmpty) {
+        if (data == null && ra['file'] != null) {
+          // 导入的备份文件不带图片，保持原样
+        } else if (data != null && data.isNotEmpty) {
           try {
             final bytes = base64Decode(data);
-            final ext = (ra['ext'] as String?) ?? '.png';
+            final ext = p.extension('a${(ra['ext'] as String?) ?? '.png'}'); // 来自外部，只取扩展名
             Directory dir;
             try {
               dir = Directory(p.join((await getApplicationSupportDirectory()).path, 'avatar'));
@@ -459,11 +514,11 @@ class Sync {
       final sp = remote['shelfPrefs'] as Map;
       final rTs = (sp['ts'] as int?) ?? 0;
       final lTs = (_box.get('sync:prefsTs') as int?) ?? 0;
-      if (rTs >= lTs) {
+      if (rTs > lTs) {
         if (sp['shelfOpts'] is Map) puts['shelfOpts'] = sp['shelfOpts'];
         for (final e in ((sp['p'] as Map?) ?? const {}).entries) {
           final k = '${e.key}';
-          if (k != 'p.${P.colsPortrait}' && k != 'p.${P.colsLandscape}') puts[k] = e.value;
+          if (_isShelfPref(k)) puts[k] = e.value;
         }
         puts['sync:prefsTs'] = rTs;
       }
@@ -473,7 +528,7 @@ class Sync {
       final rp = remote['readerPrefs'] as Map;
       final rTs = (rp['ts'] as int?) ?? 0;
       final lTs = (_box.get('sync:readerTs') as int?) ?? 0;
-      if (rTs >= lTs) {
+      if (rTs > lTs) {
         for (final e in ((rp['r'] as Map?) ?? const {}).entries) {
           puts['${e.key}'] = e.value;
         }
@@ -486,7 +541,7 @@ class Sync {
       final ap = remote['appearance'] as Map;
       final rTs = (ap['ts'] as int?) ?? 0;
       final lTs = (_box.get('sync:appearanceTs') as int?) ?? 0;
-      if (rTs >= lTs) {
+      if (rTs > lTs) {
         if (ap['themeMode'] != null) puts['themeMode'] = ap['themeMode'];
         if (ap['palette'] != null) puts['palette'] = ap['palette'];
         for (final e in ((ap['p'] as Map?) ?? const {}).entries) {
@@ -504,6 +559,23 @@ class Sync {
     }
     if (coverChanged) Volumes.changes.value++;
     changes.value++;
+  }
+
+  /// 本机分类换了 id：书架顺序、标签顺序和存着分类 id 的设置跟着改。
+  static Future<void> _renameCatRefs(Map<String, String> ids, Map<String, Object?> puts) async {
+    if (ids.isEmpty) return;
+    for (final MapEntry(key: from, value: to) in ids.entries) {
+      final order = _box.get('shelfOrder:lib:$from');
+      if (order != null) puts['shelfOrder:lib:$to'] = order;
+      await _box.delete('shelfOrder:lib:$from');
+    }
+    List<String> mapped(Object? v) => [for (final c in ((v as List?) ?? const []).cast<String>()) ids[c] ?? c];
+    if (_box.get('shelfTabOrder') != null) puts['shelfTabOrder'] = mapped(_box.get('shelfTabOrder'));
+    for (final k in [P.hiddenTabs, P.updInclude, P.updExclude]) {
+      if (_box.get('p.$k') != null) puts['p.$k'] = mapped(_box.get('p.$k'));
+    }
+    final def = _box.get('p.${P.defaultCat}');
+    if (ids[def] != null) puts['p.${P.defaultCat}'] = ids[def];
   }
 
   /// 其他设备的统计（设备 → 内容），统计页把它们加到本机数据上。
@@ -579,6 +651,7 @@ class Sync {
     final dio = _dio(await password());
     try {
       await test();
+      await _pushAvatar(dio);
       final put = await dio.put('${_dir()}$deviceId.json', data: jsonEncode(snapshot()), options: Options(contentType: 'application/json; charset=utf-8'));
       _ok(put, '上传');
       final list = await dio.request(_dir(), options: Options(method: 'PROPFIND', headers: {'Depth': '1'}, responseType: ResponseType.plain));
@@ -588,7 +661,9 @@ class Sync {
         if (name == '$deviceId.json') continue;
         final r = await dio.get('${_dir()}${Uri.encodeComponent(name)}', options: Options(responseType: ResponseType.plain));
         _ok(r, '下载 $name');
-        await merge(jsonDecode(r.data as String) as Map<String, dynamic>);
+        final remote = jsonDecode(r.data as String) as Map<String, dynamic>;
+        await _pullAvatar(dio, remote);
+        await merge(remote);
         merged++;
       }
       await _box.put('sync:last', DateTime.now().millisecondsSinceEpoch);
@@ -635,7 +710,6 @@ class SyncController extends Notifier<SyncStatus> {
     state = const SyncStatus(busy: true);
     try {
       final n = await Sync.run();
-      refreshProviders();
       state = SyncStatus(message: n == 0 ? '已同步（还没有别的设备的数据）' : '已同步，合并了 $n 台设备的数据');
     } catch (e) {
       state = SyncStatus(message: e is DioException ? '网络错误：${e.message ?? e.type.name}' : '$e');

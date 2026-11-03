@@ -158,12 +158,10 @@ class UpdateController extends Notifier<UpdateProgress> {
           final before = known[e.key];
           if (before != null && chapters.length > before) {
             final now = DateTime.now().millisecondsSinceEpoch;
-            final added = chapters.skip(before).toList();
-            for (final c in added) {
+            for (final c in chapters.skip(before)) {
               fresh.add({'aid': e.key, 'title': e.value.title, 'img': e.value.img, 'chapter': c.title, 'cid': c.cid, 'time': now});
             }
             at[e.key] = now;
-            await Volumes.invalidateAutoCoverForChapters(e.key, [for (final c in added) c.cid]);
           }
           known[e.key] = chapters.length;
         }

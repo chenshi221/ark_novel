@@ -226,9 +226,11 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
     _stepVol(delta > 0 ? 1 : -1, count);
   }
 
-  KeyEventResult _onKey(List<Vol> vols, int cur, String cover, KeyEvent e) {
+  KeyEventResult _onKey(FocusNode node, List<Vol> vols, int cur, String cover, KeyEvent e) {
     if (e is! KeyDownEvent && e is! KeyRepeatEvent) return KeyEventResult.ignored;
     final key = e.logicalKey;
+    // 焦点在里面的按钮、列表上时，回车、空格、方向键归它们自己
+    if (!node.hasPrimaryFocus && key != LogicalKeyboardKey.escape) return KeyEventResult.ignored;
     final shift = HardwareKeyboard.instance.isShiftPressed;
     if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.pageDown || key == LogicalKeyboardKey.arrowDown) {
       _stepVol(1, vols.length);
@@ -327,7 +329,7 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
                   max: vols.length - 1.0,
                   divisions: vols.length - 1,
                   label: '第 ${cur + 1} 卷',
-                  onChanged: (x) => _pc.animateToPage(x.round(), duration: const Duration(milliseconds: 220), curve: Curves.easeOutCubic),
+                  onChanged: (x) => _pc.jumpToPage(x.round()),
                 ),
               ),
             )
@@ -431,7 +433,7 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
       },
       child: Focus(
         autofocus: true,
-        onKeyEvent: (_, e) => _onKey(vols, cur, cover, e),
+        onKeyEvent: (node, e) => _onKey(node, vols, cur, cover, e),
         child: TweenAnimationBuilder<Color?>(
           tween: ColorTween(end: base),
           duration: const Duration(milliseconds: 400),

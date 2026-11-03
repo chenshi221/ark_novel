@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
+import 'package:ark_novel/next/app_prefs.dart';
 import 'package:ark_novel/next/bookmarks.dart';
 import 'package:ark_novel/next/rules.dart';
 import 'package:ark_novel/next/stats.dart';
@@ -264,5 +265,122 @@ void main() {
     expect((box.get('updates') as List).length, 1);
     expect((box.get('updates:known') as Map)['1'], 15);
     expect(box.get('themeMode'), isNull); // 默认不同步外观与主题
+  });
+
+  test('同名分类统一 id 后，删除和改名能跨设备对上', () async {
+    await box.put('lib:cats', [
+      {'id': 'c_z', 'name': '在追', 'ts': 100},
+    ]);
+    await box.put('lib:books', {
+      '1': {'aid': '1', 'title': 't', 'img': '', 'added': 1, 'cats': ['c_z'], 'bid': null, 'done': false, 'name': null, 'ts': 1},
+    });
+    await box.put('shelfOrder:lib:c_z', ['1']);
+    await box.put('shelfTabOrder', ['c_z']);
+    await box.put('p.${P.hiddenTabs}', ['c_z']);
+    final other = {'cats': [{'id': 'c_a', 'name': '在追', 'ts': 100}], 'books': {}};
+    await Sync.merge(remote(extra: other));
+    expect((box.get('lib:cats') as List).map((c) => c['id']), ['c_a']);
+    expect((box.get('lib:books') as Map)['1']['cats'], ['c_a']);
+    expect(box.get('shelfOrder:lib:c_a'), ['1']);
+    expect(box.get('shelfOrder:lib:c_z'), isNull);
+    expect(box.get('shelfTabOrder'), ['c_a']);
+    expect(box.get('p.${P.hiddenTabs}'), ['c_a']);
+
+    // 另一台改名：id 相同，按时间取新的，不会变成两个
+    await Sync.merge(remote(extra: {'cats': [{'id': 'c_a', 'name': '追番', 'ts': 200}], 'books': {}}));
+    expect((box.get('lib:cats') as List).map((c) => c['name']), ['追番']);
+
+    // 另一台删除：不复活
+    await Sync.merge(remote(extra: {'cats': [], 'books': {}, 'tomb': {'cat:c_a': DateTime.now().millisecondsSinceEpoch}}));
+    expect(box.get('lib:cats'), isEmpty);
+    await Sync.merge(remote(extra: other));
+    expect(box.get('lib:cats'), isEmpty);
+  });
+
+  test('可选设置：只有这组改过才更新时间，时间相同不互相覆盖', () async {
+    await AppPrefs.write(P.lock, true);
+    await AppPrefs.write(P.lastTab, 'x');
+    await AppPrefs.write(P.colsPortrait, 3);
+    await AppPrefs.write(P.syncShelfPrefs, true);
+    expect(box.get('sync:prefsTs'), isNull);
+    await box.put('p.${P.resumeBar}', true);
+    await Sync.merge(remote(extra: {'shelfPrefs': {'ts': 0, 'p': {'p.${P.resumeBar}': false}}}));
+    expect(box.get('p.${P.resumeBar}'), isTrue);
+
+    await Sync.merge(remote(extra: {'shelfPrefs': {'ts': 5, 'p': {'p.${P.resumeBar}': false, 'p.${P.lastTab}': 'y'}}}));
+    expect(box.get('p.${P.resumeBar}'), isFalse);
+    expect(box.get('p.${P.lastTab}'), 'x');
+    await AppPrefs.write(P.resumeBar, true);
+    expect(box.get('sync:prefsTs') as int, greaterThan(5));
+  });
+
+  test('恢复自动封面能跨设备生效，之后重新挑的不受影响', () async {
+    await box.put('vcover2:1', {'一': 'mine'});
+    await box.put('vpick:1', ['一']);
+    await box.put('vpickTs:1', {'一': 100});
+    final picked = {'vcover': {'1': {'一': 'theirs'}}, 'vpick': {'1': ['一']}, 'vpickTs': {'1': {'一': 50}}};
+
+    // 手动对手动：时间新的赢
+    await Sync.merge(remote(extra: picked));
+    expect(Volumes.cover('1', '一'), 'mine');
+
+    // 另一台恢复了自动封面：本机的手动封面也去掉
+    final at = DateTime.now().millisecondsSinceEpoch;
+    await Sync.merge(remote(extra: {'vcover': {'1': <String, String>{}}, 'vpick': {'1': <String>[]}, 'tomb': {'vcover:1:一': at}}));
+    expect(Volumes.cover('1', '一'), isNull);
+
+    // 还没收到恢复的设备传来旧封面：不写回
+    await Sync.merge(remote(extra: picked));
+    expect(Volumes.cover('1', '一'), isNull);
+
+    // 恢复之后又挑了新的：生效
+    await Sync.merge(remote(extra: {'vcover': {'1': {'一': 'new'}}, 'vpick': {'1': ['一']}, 'vpickTs': {'1': {'一': at + 1000}}}));
+    expect(Volumes.cover('1', '一'), 'new');
+  });
+
+  test('头像单独传文件：快照不带图片，没变不重传，对方新的才下载', () async {
+    final files = <String, String>{};
+    final puts = <String>[];
+    final server = await HttpServer.bind('127.0.0.1', 0);
+    server.listen((req) async {
+      final name = Uri.decodeFull(req.uri.path).split('/').last;
+      final body = await utf8.decoder.bind(req).join();
+      final res = req.response;
+      if (req.method == 'PROPFIND') {
+        res.statusCode = 207;
+        res.write('<d:multistatus xmlns:d="DAV:">${[for (final k in files.keys) '<d:response><d:href>/dav/A/$k</d:href></d:response>'].join()}</d:multistatus>');
+      } else if (req.method == 'PUT') {
+        files[name] = body;
+        puts.add(name);
+        res.statusCode = 201;
+      } else if (files.containsKey(name)) {
+        res.write(files[name]);
+      } else {
+        res.statusCode = 404;
+      }
+      await res.close();
+    });
+    final tmp = Directory.systemTemp.createTempSync('ark_avatar_test');
+    await box.put('avatar', (File('${tmp.path}/a.png')..writeAsStringSync('mine')).path);
+    await box.put('avatar:ts', 5);
+    await Sync.save(url: 'http://127.0.0.1:${server.port}/dav/', user: 'me', pass: 'x', folder: 'A');
+
+    await Sync.run();
+    final mine = '${Sync.deviceId}.avatar';
+    expect(files[mine], 'mine');
+    final snap = jsonDecode(files['${Sync.deviceId}.json']!) as Map;
+    expect((snap['avatar'] as Map)['file'], mine);
+    expect((snap['avatar'] as Map).containsKey('data'), isFalse);
+
+    puts.clear();
+    files['o.avatar'] = 'theirs';
+    files['o.json'] = jsonEncode(remote(extra: {'avatar': {'ts': 9, 'ext': '/../../evil.png', 'file': 'o.avatar'}}));
+    await Sync.run();
+    expect(puts, isNot(contains(mine)));
+    expect(box.get('avatar:ts'), 9);
+    expect(File(box.get('avatar') as String).readAsStringSync(), 'theirs');
+    expect(box.get('avatar') as String, endsWith('.png'));
+    expect(box.get('avatar') as String, isNot(contains('evil')));
+    await server.close(force: true);
   });
 }

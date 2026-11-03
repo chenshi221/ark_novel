@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show ValueListenable, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemNavigator;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -132,8 +132,9 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // 进后台或桌面端切走窗口时把 cookie jar 里服务端续期过的 cookie 写回本地并触发同步
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+    // 进后台或桌面端切走窗口时把 cookie jar 里服务端续期过的 cookie 写回本地并触发同步；手机上 inactive 只是下拉通知栏之类，不算
+    final mobile = defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS;
+    if (state == AppLifecycleState.paused || (state == AppLifecycleState.inactive && !mobile)) {
       ref.read(sessionProvider.notifier).persistCookies();
       Sync.auto();
       if (ReadingWidget.supported) _pushWidget();

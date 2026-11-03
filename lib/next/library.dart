@@ -313,7 +313,10 @@ class LibraryController extends Notifier<LibraryState> {
         cats = [...cats, for (final n in used.toList()..sort()) if (!cats.any((c) => c.id == 'shelf$n')) LibCategory('shelf$n', shelfNames[n])];
       }
       final ops = {for (final e in _ops().entries) e.key: e.value['op'] as String};
-      await _save(reconcile(state.books, remote, ops, now: now, firstImport: first), cats);
+      final next = reconcile(state.books, remote, ops, now: now, firstImport: first);
+      // 网站上被移除的：记下删除，不然别的设备下次同步又把它带回来
+      await Sync.tombstone([for (final aid in state.books.keys) if (!next.containsKey(aid)) 'lib:$aid']);
+      await _save(next, cats);
       await _box.put('lib:imported', s.user.uid);
       await _box.put('lib:sync', now);
       if (details) unawaited(prefetchDetails());

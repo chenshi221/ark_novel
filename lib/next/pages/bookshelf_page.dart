@@ -113,7 +113,7 @@ class _OptionsController extends Notifier<ShelfOptions> {
   }
 
   void set(ShelfOptions v) {
-    _box.put('shelfOpts', v.toMap());
+    _box.putAll({'shelfOpts': v.toMap(), 'sync:prefsTs': DateTime.now().millisecondsSinceEpoch});
     state = v;
   }
 }
@@ -301,6 +301,9 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
     if (AppPrefs.read(P.lastTab, '') != id) AppPrefs.write(P.lastTab, id);
     if (id == _shown) return;
     _shown = id;
+    // 换标签就放出「继续阅读」条：新标签可能短到滚不动，收起了就再也出不来
+    _scrollAccum = 0;
+    _resumeHidden.value = false;
     final ctx = _keys[id]?.currentContext;
     if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 200), alignment: 0.5);
   }

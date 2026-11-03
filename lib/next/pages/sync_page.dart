@@ -78,7 +78,6 @@ class _SyncPageState extends ConsumerState<SyncPage> {
       if (picked == null) return;
       final merged = await Sync.importBackup(utf8.decode(await File(picked.path!).readAsBytes()));
       if (!mounted) return;
-      if (merged) ref.read(syncProvider.notifier).refreshProviders();
       setState(() => _note = merged ? '已导入备份' : '这是本机导出的备份，不需要导入');
     } catch (e) {
       if (mounted) setState(() => _note = '导入失败：$e');
@@ -195,25 +194,21 @@ class _SyncPageState extends ConsumerState<SyncPage> {
           const XGroupTitle('可选同步项'),
           XSwitch(
             title: '同步自定义头像',
-            subtitle: '在各设备间同步个人页自选的头像图片',
             value: prefs.get(P.syncAvatar, true),
             onChanged: (v) => prefs.set(P.syncAvatar, v),
           ),
           XSwitch(
             title: '同步书架与更新偏好',
-            subtitle: '同步书架排序、筛选显示及自动更新条件（不含横竖屏列数）',
             value: prefs.get(P.syncShelfPrefs, false),
             onChanged: (v) => prefs.set(P.syncShelfPrefs, v),
           ),
           XSwitch(
             title: '同步阅读器设置',
-            subtitle: '同步字号、行距、边距、翻页方式等阅读排版习惯',
             value: prefs.get(P.syncReaderPrefs, false),
             onChanged: (v) => prefs.set(P.syncReaderPrefs, v),
           ),
           XSwitch(
             title: '同步外观与主题',
-            subtitle: '同步深浅色模式、配色方案（手机与电脑想用不同主题时请关闭）',
             value: prefs.get(P.syncAppearance, false),
             onChanged: (v) => prefs.set(P.syncAppearance, v),
           ),
@@ -221,9 +216,6 @@ class _SyncPageState extends ConsumerState<SyncPage> {
           const XGroupTitle('手动备份'),
           XTile(leading: const XLeading(icon: Icons.upload_outlined), title: '导出同步数据', onTap: _export),
           XTile(leading: const XLeading(icon: Icons.download_outlined), title: '导入同步数据', subtitle: '合并到本机，不覆盖', onTap: _import),
-          const XDivider(),
-          const XGroupTitle('说明'),
-          const XNote('默认始终同步：书架书籍与重命名、自建分类（如「在追」）及分组归属、手动挑选与裁剪过的卷封面、更新列表与基准、阅读进度、已读章节、书签、历史、替换规则、笔记与阅读统计。'),
         ],
       )),
     );

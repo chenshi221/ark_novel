@@ -18,6 +18,7 @@ import 'library.dart';
 import 'progress.dart';
 import 'read_state.dart';
 import 'stats.dart';
+import 'sync.dart';
 
 /// 目录里的一卷：卷名、章节 cid（按顺序）、插图章节的 cid（没有为 null）。
 class Vol {
@@ -81,8 +82,8 @@ class Volumes {
         if (illus == null || saved == null) continue;
         final manual = picked.contains(title) || saved.contains('#crop=');
         if (manual) continue;
-        // 之前没有插图章而后补上了插图章，或者之前没取到插图记成了 ''：清掉旧记录重新抓取
-        if ((old.isNotEmpty && oldIllus[title] != illus) || saved.isEmpty) {
+        // 插图章变了（比如后来才补上）：清掉旧记录重新抓取。记成 '' 而插图章没变的，由 [VolumeCoverQueue.get] 每次运行重试一次
+        if (old.isNotEmpty && oldIllus[title] != illus) {
           updated.remove(title);
           staleCids.add(illus);
         }
@@ -96,34 +97,6 @@ class Volumes {
       }
     }
     await refreshDone(aid);
-  }
-
-  /// 更新检查发现新章节时：若新章节属于某卷的插图章（或该卷之前未取到插图封面），清掉自动封面记录以便重新抓取。
-  static Future<void> invalidateAutoCoverForChapters(String aid, Iterable<String> newCids) async {
-    final cids = newCids.toSet();
-    if (cids.isEmpty) return;
-    final covers = _covers(aid);
-    if (covers.isEmpty) return;
-    final picked = _picked(aid);
-    final updated = {...covers};
-    final staleCids = <String>[];
-    for (final v in of(aid)) {
-      final saved = covers[v.title];
-      if (saved == null || picked.contains(v.title) || saved.contains('#crop=')) continue;
-      final touched = v.cids.any(cids.contains);
-      if (!touched) continue;
-      if ((v.illus != null && cids.contains(v.illus)) || saved.isEmpty) {
-        updated.remove(v.title);
-        if (v.illus != null) staleCids.add(v.illus!);
-      }
-    }
-    if (updated.length != covers.length) {
-      await _box.put('vcover2:$aid', updated);
-      if (staleCids.isNotEmpty && Hive.isBoxOpen('chapter_index')) {
-        await ChapterCache.removeChapters(aid, staleCids, compact: false);
-      }
-      changes.value++;
-    }
   }
 
   /// [cid] 在第几卷，找不到为 -1。
@@ -142,7 +115,10 @@ class Volumes {
   /// [url] 可以带裁剪框（见 [withCrop]），自选封面就是这样存的；[picked] 是手动挑的，图片缓存清理时一直留着
   static Future<void> setCover(String aid, String title, String url, {bool picked = false}) async {
     await _box.put('vcover2:$aid', {..._covers(aid), title: url});
-    if (picked) await _box.put('vpick:$aid', (_picked(aid)..add(title)).toList());
+    if (picked) {
+      await _box.put('vpick:$aid', (_picked(aid)..add(title)).toList());
+      await _box.put('vpickTs:$aid', {...((_box.get('vpickTs:$aid') as Map?) ?? const {}), title: DateTime.now().millisecondsSinceEpoch});
+    }
     changes.value++;
   }
 
@@ -164,6 +140,7 @@ class Volumes {
   static Future<void> resetCover(String aid, String title) async {
     await _box.put('vcover2:$aid', {..._covers(aid)}..remove(title));
     await _box.put('vpick:$aid', (_picked(aid)..remove(title)).toList());
+    await Sync.tombstone(['vcover:$aid:$title']);
     final illus = of(aid).where((v) => v.title == title).firstOrNull?.illus;
     if (illus != null && Hive.isBoxOpen('chapter_index')) {
       await ChapterCache.removeChapters(aid, [illus], compact: false);
