@@ -170,7 +170,19 @@ class _StatsPageState extends ConsumerState<StatsPage> {
     ]);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('阅读统计')),
+      appBar: AppBar(
+        title: const Text('阅读统计'),
+        actions: [
+          if (perBook.isNotEmpty)
+            TextButton(
+              onPressed: () async {
+                await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const _ManageStatsPage()));
+                if (mounted) setState(() {});
+              },
+              child: const Text('管理'),
+            ),
+        ],
+      ),
       body: total == 0 && ReadingStats.chapters == 0
           ? const StatePanel(title: '还没有阅读数据', detail: '读几章之后这里会出现统计。')
           : ListView(
@@ -481,6 +493,53 @@ class _StatsPageState extends ConsumerState<StatsPage> {
 }
 
 /// GitHub 那样的阅读日历：一列一周（周一在上），越往右越近，颜色越深读得越久。格子数按宽度放得下多少周算。
+/// 管理阅读记录：所有读过的书，时长长的在前，可以一本本删掉。
+class _ManageStatsPage extends StatefulWidget {
+  const _ManageStatsPage();
+
+  @override
+  State<_ManageStatsPage> createState() => _ManageStatsPageState();
+}
+
+class _ManageStatsPageState extends State<_ManageStatsPage> {
+  Future<void> _delete(String aid, String title) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除阅读记录'),
+        content: Text('删除《$title》的阅读记录？书架和阅读进度不受影响。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('删除')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await ReadingStats.deleteBook(aid);
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final books = ReadingStats.perBook().entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    return Scaffold(
+      appBar: AppBar(title: const Text('管理记录')),
+      body: ListView.builder(
+        itemCount: books.length,
+        itemBuilder: (context, i) {
+          final e = books[i];
+          final title = ReadingStats.info(e.key).title;
+          return ListTile(
+            title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(_duration(e.value)),
+            trailing: IconButton(tooltip: '删除', icon: const Icon(Icons.delete_outline), onPressed: () => _delete(e.key, title)),
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _Heatmap extends StatelessWidget {
   const _Heatmap({required this.perDay, required this.now});
 

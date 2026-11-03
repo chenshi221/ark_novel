@@ -20,6 +20,8 @@ void main() {
 
   setUp(() => box.clear());
 
+  statsDeleteTests(() => box);
+
   Map<String, dynamic> remote({Map<String, dynamic> extra = const {}}) => {
     'v': 1,
     'device': 'other',
@@ -382,5 +384,45 @@ void main() {
     expect(box.get('avatar') as String, endsWith('.png'));
     expect(box.get('avatar') as String, isNot(contains('evil')));
     await server.close(force: true);
+  });
+}
+
+void statsDeleteTests(Box Function() box) {
+  test('删一本书的统计：本机、已同步的都去掉，其他书不动；再合并不会回来，删之后又读的留下', () async {
+    final b = box();
+    await b.put('stats:day', {'2026-01-01': 100, '2026-01-02': 50});
+    await b.put('stats:book', {'1': 90, '2': 60});
+    await b.put('stats:days:1', ['2026-01-01']);
+    await b.put('stats:ch:1', {'c': {'2026-01-01': 90}});
+    await b.put('stats:meta', {'1': {'t': 'a'}, '2': {'t': 'b'}});
+    final other = {'day': {'2026-01-01': 30}, 'book': {'1': 30}, 'chapters': 1, 'meta': {'1': {'t': 'a'}}, 'days': {'1': ['2026-01-01']}, 'ch': {'1': {'c': {'2026-01-01': 30}}}};
+    await b.put('sync:stats:other', jsonEncode(other));
+
+    await ReadingStats.deleteBook('1');
+    expect(ReadingStats.perBook(), {'2': 60});
+    expect(ReadingStats.perDay(), {'2026-01-01': 10, '2026-01-02': 50});
+    expect(ReadingStats.bookDays('1'), isEmpty);
+    expect(ReadingStats.chapterSeconds('1'), isEmpty);
+
+    Map<String, dynamic> snapshot(Map stats) => {'v': 1, 'device': 'other', 'progress': {}, 'history': [], 'bookmarks': [], 'read': {}, 'readchars': {}, 'rating': {}, 'rules': [], 'notes': {}, 'stats': stats};
+    await Sync.merge(snapshot(other));
+    expect(ReadingStats.perBook(), {'2': 60});
+
+    final later = ReadingStats.dayKey(DateTime.now().add(const Duration(days: 1)));
+    await Sync.merge(snapshot({'day': {later: 5}, 'book': {'1': 5}, 'chapters': 1, 'meta': {}, 'days': {'1': [later]}, 'ch': {}}));
+    expect(ReadingStats.perBook()['1'], 5);
+  });
+
+  test('别的设备删的书：本机只删一次，之后又读的不再被删', () async {
+    final b = box();
+    await b.put('stats:book', {'1': 90});
+    await b.put('stats:days:1', ['2026-01-01']);
+    final tomb = DateTime.now().millisecondsSinceEpoch;
+    Map<String, dynamic> snapshot() => {'v': 1, 'device': 'other', 'progress': {}, 'history': [], 'bookmarks': [], 'read': {}, 'readchars': {}, 'rating': {}, 'rules': [], 'notes': {}, 'tomb': {'stats:1': tomb}, 'stats': {'day': {}, 'book': {}, 'chapters': 0, 'meta': {}, 'days': {}, 'ch': {}}};
+    await Sync.merge(snapshot());
+    expect(ReadingStats.perBook(), isEmpty);
+    await ReadingStats.addSeconds('1', 10);
+    await Sync.merge(snapshot());
+    expect(ReadingStats.perBook()['1'], 10);
   });
 }

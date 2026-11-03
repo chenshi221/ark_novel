@@ -149,29 +149,11 @@ class MainActivity : AudioServiceFragmentActivity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (readerVolumeKeyHandlingEnabled &&
-            (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
-            (event?.repeatCount ?: 0) > 0
-        ) {
-            // Ignore long-press repeats so one press turns exactly one page.
+        if (readerVolumeKeyHandlingEnabled && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) {
+            // The argument marks long-press repeats; the reader paces them.
+            val method = if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) "volumeUp" else "volumeDown"
+            readerVolumeChannel?.invokeMethod(method, (event?.repeatCount ?: 0) > 0)
             return true
-        }
-        if (event?.repeatCount ?: 0 > 0) {
-            return super.onKeyDown(keyCode, event)
-        }
-        when (keyCode) {
-            KeyEvent.KEYCODE_VOLUME_UP -> {
-                if (readerVolumeKeyHandlingEnabled) {
-                    readerVolumeChannel?.invokeMethod("volumeUp", null)
-                    return true
-                }
-            }
-            KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                if (readerVolumeKeyHandlingEnabled) {
-                    readerVolumeChannel?.invokeMethod("volumeDown", null)
-                    return true
-                }
-            }
         }
         return super.onKeyDown(keyCode, event)
     }

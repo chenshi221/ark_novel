@@ -537,7 +537,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
 }
 
 /// 书架顶上的「继续阅读」：最近读的一本，点了直接进阅读器（返回回到书架）；关掉后，读到别的书时再出现。
-/// 像音乐 App 的"正在播放"：底色取封面的色调，封面、书名、读到的章节、整本的进度，右边一个大的继续按钮。
+/// 像音乐 App 的"正在播放"：底色取封面的色调，封面、书名、读到的章节，右边一个大的继续按钮。
 /// 往下滑书架时收起（[hidden]），不一直挡着；设置里可以整个关掉。
 class _ResumeBar extends ConsumerWidget {
   const _ResumeBar({required this.hidden});
@@ -592,8 +592,6 @@ class _ResumeBar extends ConsumerWidget {
     ref.watch(volumeChangesProvider); // 取到高清封面后换上
     final cover = ref.read(volumeCoverQueueProvider).bookCover(h.aid, h.img);
     final tint = ref.watch(coverColorProvider(cover)).value ?? savedCoverColor(cover) ?? kNeutralCoverColor;
-    final total = Volumes.of(h.aid).fold(0, (a, v) => a + v.cids.length);
-    final progress = total == 0 ? null : (ReadState.readCount(h.aid) / total).clamp(0.0, 1.0);
     final theme = Theme.of(context);
     void open() => context.push(Routes.reader(h.aid, h.cid));
     return Padding(
@@ -659,14 +657,6 @@ class _ResumeBar extends ConsumerWidget {
                   onPressed: () => box.put('resumeClosed', h.aid),
                 ),
               ),
-              // 整本读了多少（按章数）
-              if (progress != null)
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: LinearProgressIndicator(value: progress, minHeight: 3, color: Colors.white.withValues(alpha: 0.85), backgroundColor: Colors.white.withValues(alpha: 0.15)),
-                ),
             ],
           ),
         ),

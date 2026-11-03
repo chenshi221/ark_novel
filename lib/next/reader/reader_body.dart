@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -22,6 +23,45 @@ class Chapter {
 
   /// 受限书取不到正文，[text] 只是一句说明
   final bool locked;
+}
+
+/// 翻页时要接上的相邻章节。[cover] 是排在这章最前面的卷封面（只在双页时占一页）。
+class ChapterPeek {
+  const ChapterPeek({required this.chapter, required this.title, required this.spanOf, this.cover, this.volumeProgress});
+
+  final Chapter chapter;
+  final String title;
+  final SpanOf spanOf;
+  final String? cover;
+  final double Function(double)? volumeProgress;
+}
+
+/// 双页时，紧挨在一章前后的那章开头要不要空出左页给别的页：前面有 [lead] 页、这章有 [count] 页时，奇数就是要。往前往后都是这个算法。
+int adjacentLead(int lead, int count) => (lead + count) % 2;
+
+/// 一章排好的页：可以有一页卷封面，后面是正文页和插图页。
+class FlowPages {
+  const FlowPages({required this.chapter, required this.title, required this.spanOf, required this.starts, required this.head, this.cover, this.volumeProgress});
+
+  final Chapter chapter;
+  final String title;
+  final SpanOf spanOf;
+  final List<int> starts;
+  final double head; // 第一页开头章节标题的高度
+  final String? cover;
+  final double Function(double)? volumeProgress;
+
+  int get textPages => chapter.text.trim().isNotEmpty ? starts.length : 0;
+  int get total => textPages + chapter.images.length;
+  int get covers => cover == null ? 0 : 1;
+  int get count => covers + total;
+
+  int units(int cols, int lead) => (lead + count + cols - 1) ~/ cols;
+
+  int offsetOfPage(int page) => page < textPages ? starts[page] : chapter.text.length + 1 + (page - textPages);
+
+  /// 第 [unit] 屏的第一页正文的字符偏移（封面、上一章的页不算）
+  int offsetOfUnit(int unit, int cols, int lead) => offsetOfPage(math.min(math.max(0, unit * cols - lead - covers), math.max(total - 1, 0)));
 }
 
 /// 往前翻章时用的"落在最后一页"标记（偏移量超出任何正文）。
@@ -120,13 +160,14 @@ Widget chapterHeading(String title, TextStyle body, double width, {(Color, Widge
 
 /// 点击检测：用原始指针事件，不进手势竞技场，所以不会被 [SelectionArea] 或翻页手势吞掉。
 /// 按下后移动不到 14 像素、300 毫秒内抬起算一次点击；按下时已有选中文字则这次点击只用来取消选择。
+/// 点击翻了页之后的一小会儿，正文不接收触摸：连点翻页时第二下不会被选字组件当成双击选词。
 class TapDetector extends StatefulWidget {
   const TapDetector({super.key, required this.child, required this.onTap, this.hasSelection});
 
   final Widget child;
 
-  /// [local] 是点击在本组件内的位置，[size] 是组件大小，[global] 是屏幕位置
-  final void Function(Offset local, Size size, Offset global) onTap;
+  /// [local] 是点击在本组件内的位置，[size] 是组件大小，[global] 是屏幕位置；返回这次点击有没有翻页
+  final bool Function(Offset local, Size size, Offset global) onTap;
   final bool Function()? hasSelection;
 
   @override
@@ -137,6 +178,14 @@ class _TapDetectorState extends State<TapDetector> {
   Offset? _down;
   DateTime _at = DateTime.now();
   bool _ignore = false;
+  bool _turning = false;
+  Timer? _turned;
+
+  @override
+  void dispose() {
+    _turned?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => Listener(
@@ -155,9 +204,13 @@ class _TapDetectorState extends State<TapDetector> {
       _down = null;
       if (d == null || _ignore || DateTime.now().difference(_at) > const Duration(milliseconds: 300)) return;
       final box = context.findRenderObject() as RenderBox;
-      widget.onTap(box.globalToLocal(e.position), box.size, e.position);
+      if (!widget.onTap(box.globalToLocal(e.position), box.size, e.position)) return;
+      setState(() => _turning = true);
+      _turned?.cancel();
+      // 比系统双击的判定时间（300 毫秒）长一点
+      _turned = Timer(const Duration(milliseconds: 350), () => setState(() => _turning = false));
     },
-    child: widget.child,
+    child: IgnorePointer(ignoring: _turning, child: widget.child),
   );
 }
 
@@ -389,9 +442,15 @@ class _ScrollBodyState extends State<ScrollBody> {
       child: TapDetector(
         hasSelection: widget.hasSelection,
         onTap: (local, size, global) {
-          if (widget.menuOpen?.call() ?? false) return widget.onTapZone();
+          if (widget.menuOpen?.call() ?? false) {
+            widget.onTapZone();
+            return false;
+          }
           final m = markAt(c, _textKey, 0, global);
-          if (m != null) return widget.onMark(m);
+          if (m != null) {
+            widget.onMark(m);
+            return false;
+          }
           switch (tapActionAt(widget.tapZone, widget.tapInvert, local, size, paged: false)) {
             case TapAction.prev:
               _page(-1);
@@ -399,7 +458,9 @@ class _ScrollBodyState extends State<ScrollBody> {
               _page(1);
             case TapAction.menu:
               widget.onTapZone();
+              return false;
           }
+          return true;
         },
         child: PullBookmark(
           onPull: widget.onPullDown,
@@ -581,7 +642,29 @@ class PagedBody extends StatefulWidget {
     this.onPullDown,
     this.marked,
     this.headingAccent,
+    this.prevChapter,
+    this.nextChapter,
+    this.volumeCover,
+    this.lead = 0,
+    this.arrivedBack = false,
+    this.onTurn,
   });
+
+  /// 相邻章节已经加载好时传进来：翻到头时接着翻过去，不用另外的换章动画，双页时还用来补空着的半边
+  final ChapterPeek? prevChapter;
+  final ChapterPeek? nextChapter;
+
+  /// 这章在一卷开头时那一卷的封面：双页时放在第一页前面
+  final String? volumeCover;
+
+  /// 双页时第一屏左页是不是留给上一章的最后一页（或上一章接过来的页）：0 或 1
+  final int lead;
+
+  /// 是往回翻过来的，落在最后一屏也不算读完
+  final bool arrivedBack;
+
+  /// 翻进相邻章节后调用：方向、那章的 [lead]、落点的字符偏移
+  final void Function(int dir, int lead, int offset)? onTurn;
 
   /// 在页面上往下拉：加 / 取消书签；[marked] 是当前页有没有书签
   final VoidCallback? onPullDown;
@@ -638,6 +721,9 @@ class PagedBody extends StatefulWidget {
 }
 
 class _PagedBodyState extends State<PagedBody> {
+  // 分页结果留几章：翻过去时刚排过的相邻章不用再排一遍
+  static final _pageCache = <(Size, TextStyle, String, String), List<int>>{};
+
   final _curl = PageCurlController();
   final _keys = <int, GlobalKey>{};
   PageController? _controller;
@@ -652,6 +738,8 @@ class _PagedBodyState extends State<PagedBody> {
   double _width = 0;
   Size _imgBox = Size.zero; // 插图页的大小（整页，双页时一半），按它提前解码
   Chapter? _fetched; // 已经开始在后台下载整章插图的那一章
+  FlowPages? _prev, _next;
+  int _base = 0; // 滑动翻页时 PageView 的第 0 项是不是上一章（是的话为 1）
 
   @override
   void initState() {
@@ -674,7 +762,7 @@ class _PagedBodyState extends State<PagedBody> {
     if (widget.curl) {
       _curl.goTo(p);
     } else {
-      _controller?.animateToPage(p, duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+      _controller?.animateToPage(p + _base, duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
     }
   }
 
@@ -688,17 +776,61 @@ class _PagedBodyState extends State<PagedBody> {
 
   bool get _hasText => _c.text.trim().isNotEmpty;
 
-  int get _textPages => _hasText ? _starts.length : 0;
+  FlowPages get _me => FlowPages(chapter: _c, title: widget.title, spanOf: widget.spanOf, starts: _starts, head: _head, cover: _cols == 2 ? widget.volumeCover : null, volumeProgress: widget.volumeProgress);
+
+  int get _lead => _cols == 2 ? widget.lead : 0;
+
+  int get _textPages => _me.textPages;
 
   /// 单页总数
-  int get _total => _textPages + _c.images.length;
+  int get _total => _me.total;
 
   /// 翻页的单位数（双页时两页算一屏）
-  int get _units => (_total + _cols - 1) ~/ _cols;
+  int get _units => _me.units(_cols, _lead);
 
-  int _offsetOfPage(int page) => page < _textPages ? _starts[page] : _c.text.length + 1 + (page - _textPages);
+  int _offsetOf(int unit) => _me.offsetOfUnit(unit, _cols, _lead);
 
-  int _offsetOf(int unit) => _offsetOfPage(unit * _cols);
+  /// 最后一页在左页、右页已经接上了下一章
+  bool get _trailing => (_lead + _me.count) % _cols != 0;
+
+  int get _nextLead => _cols == 2 ? adjacentLead(_lead, _me.count) : 0;
+
+  int get _prevLead => _cols == 2 && _prev != null ? adjacentLead(_lead, _prev!.count) : 0;
+
+  /// 下一屏 / 上一屏在相邻章节里，可以直接翻过去。章节短到接不出新的一屏时不翻，直接换（画面不变）。
+  bool get _canTurnNext => _next != null && (!_trailing || _next!.count >= 2);
+
+  bool get _canTurnPrev => _prev != null && (_lead == 0 || _prev!.units(_cols, _prevLead) >= 2);
+
+  /// 已经翻到相邻章节那一屏了：交给阅读页真正换章。新的正文第一帧和这一屏一模一样，看不出切换。
+  void _land(int dir) {
+    if (dir > 0) {
+      final lead = _nextLead;
+      widget.onTurn?.call(1, lead, _next!.offsetOfUnit(math.max(0, math.min(lead, _next!.units(_cols, lead) - 1)), _cols, lead));
+    } else {
+      final lead = _prevLead;
+      widget.onTurn?.call(-1, lead, _prev!.offsetOfUnit(math.max(0, _prev!.units(_cols, lead) - 1 - _lead), _cols, lead));
+    }
+  }
+
+  void _reachEnd() => _next != null ? _land(1) : widget.onNext?.call();
+
+  void _reachStart() => _prev != null ? _land(-1) : widget.onPrev?.call();
+
+  FlowPages? _flowOf(ChapterPeek? p, Size size) {
+    if (p == null) return null;
+    final has = p.chapter.text.trim().isNotEmpty;
+    final head = has ? headingHeight(p.title, widget.style, size.width) : 0.0;
+    return FlowPages(chapter: p.chapter, title: p.title, spanOf: p.spanOf, starts: has ? _paged(p.chapter, p.title, size, head) : const [0], head: head, cover: _cols == 2 ? p.cover : null, volumeProgress: p.volumeProgress);
+  }
+
+  List<int> _paged(Chapter c, String title, Size size, double head) {
+    final key = (size, widget.style, c.text, title);
+    final hit = _pageCache[key];
+    if (hit != null) return hit;
+    if (_pageCache.length >= 6) _pageCache.remove(_pageCache.keys.first);
+    return _pageCache[key] = paginate(c.text, widget.style, size, strut: readerStrut(widget.style), firstTop: head);
+  }
 
   /// 字符偏移所在的那一屏。
   int _pageOf(int offset) {
@@ -711,7 +843,7 @@ class _PagedBodyState extends State<PagedBody> {
     } else {
       page = _hasText ? pageOfOffset(_starts, offset) : 0;
     }
-    return page ~/ _cols;
+    return (page + _me.covers + _lead) ~/ _cols;
   }
 
   GlobalKey _keyFor(int page) => _keys.putIfAbsent(page, GlobalKey.new);
@@ -722,7 +854,7 @@ class _PagedBodyState extends State<PagedBody> {
     if (widget.curl) {
       _curl.goTo(p);
     } else {
-      _controller?.jumpToPage(p);
+      _controller?.jumpToPage(p + _base);
     }
   }
 
@@ -736,6 +868,8 @@ class _PagedBodyState extends State<PagedBody> {
   }
 
   void _changed(int page) {
+    if (page < 0) return _land(-1);
+    if (page >= _units) return _land(1);
     _page = page;
     _publish();
     _cur = _offsetOf(page);
@@ -746,56 +880,83 @@ class _PagedBodyState extends State<PagedBody> {
 
   /// 插图章：整章的图按顺序在后台下好；前后一屏的图提前解码，翻过去直接出图（翻页时下一页才建出来）
   void _prefetch() {
-    if (_c.images.isEmpty || _imgBox.isEmpty) return;
+    if (_imgBox.isEmpty) return;
+    for (final cover in [widget.volumeCover, _prev?.cover, _next?.cover]) {
+      if (cover != null && _cols == 2) NetImage.precache(context, cover, _imgBox, fit: BoxFit.contain);
+    }
+    if (_c.images.isEmpty) return;
     if (!identical(_fetched, _c)) {
       _fetched = _c;
       for (final url in _c.images) {
         NetImage.precache(context, url, _imgBox, decode: false);
       }
     }
-    for (var i = (_page - 1) * _cols; i < (_page + 2) * _cols; i++) {
+    final skip = _lead + _me.covers;
+    for (var i = (_page - 1) * _cols - skip; i < (_page + 2) * _cols - skip; i++) {
       if (i >= _textPages && i < _total) NetImage.precache(context, _c.images[i - _textPages], _imgBox, fit: BoxFit.contain);
     }
   }
 
   Widget _pageContent(BuildContext context, int unit, bool live, EdgeInsets pad) {
-    if (_cols == 1) return _single(context, unit, live, pad);
+    if (_cols == 1) return _slot(context, unit, live, pad);
     final line = widget.color.withValues(alpha: 0.12);
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch, // 两页都占满高度，不然字数不同时上下错开
       children: [
         for (var k = 0; k < _cols; k++) ...[
-          Expanded(child: unit * _cols + k < _total ? _single(context, unit * _cols + k, live, pad) : const SizedBox.shrink()),
+          Expanded(child: _slot(context, unit * _cols + k, live, pad)),
           if (k < _cols - 1) VerticalDivider(width: 1, thickness: 1, indent: 24, endIndent: 24, color: line),
         ],
       ],
     );
   }
 
-  Widget _single(BuildContext context, int i, bool live, EdgeInsets pad) {
-    if (i >= _textPages) return Center(child: NetImage(_c.images[i - _textPages], fit: BoxFit.contain));
-    final end = i + 1 < _starts.length ? _starts[i + 1] : _c.text.length;
+  /// 排在第 [slot] 个位置的页：前面、后面排不下的是相邻章节的页，还没加载好就空着。
+  Widget _slot(BuildContext context, int slot, bool live, EdgeInsets pad) {
+    final me = _me;
+    final i = slot - _lead;
+    if (i >= 0 && i < me.count) return _flowPage(context, me, i, live, pad);
+    final (other, j) = i < 0 ? (_prev, (_prev?.count ?? 0) + i) : (_next, i - me.count);
+    return other == null || j < 0 || j >= other.count ? const SizedBox.shrink() : _flowPage(context, other, j, false, pad);
+  }
+
+  Widget _flowPage(BuildContext context, FlowPages f, int i, bool live, EdgeInsets pad) {
+    if (i < f.covers) return Center(child: NetImage(f.cover!, fit: BoxFit.contain));
+    return _single(context, f, i - f.covers, live, pad);
+  }
+
+  Widget _single(BuildContext context, FlowPages f, int i, bool live, EdgeInsets pad) {
+    final c = f.chapter;
+    if (i >= f.textPages) return Center(child: NetImage(c.images[i - f.textPages], fit: BoxFit.contain));
+    final end = i + 1 < f.starts.length ? f.starts[i + 1] : c.text.length;
     final faint = TextStyle(fontSize: 11, color: widget.color.withValues(alpha: 0.5));
     final view = MediaQuery.viewPaddingOf(context);
     return Stack(
       children: [
         // 页尾的换行会多出一个空行超出页面，所以不用 Column：标题单独放，正文往下让出标题的高度
-        if (i == 0 && _head > 0) Positioned(top: pad.top, left: pad.left, right: pad.right, child: chapterHeading(widget.title, widget.style, _width, accent: widget.headingAccent)),
+        if (i == 0 && f.head > 0) Positioned(top: pad.top, left: pad.left, right: pad.right, child: chapterHeading(f.title, widget.style, _width, accent: widget.headingAccent)),
         Padding(
-          padding: i == 0 ? pad.copyWith(top: pad.top + _head) : pad,
-          child: Text.rich(widget.spanOf(_starts[i], end), key: live ? _keyFor(i) : null, textScaler: TextScaler.noScaling, strutStyle: readerStrut(widget.style)),
+          padding: i == 0 ? pad.copyWith(top: pad.top + f.head) : pad,
+          child: Text.rich(f.spanOf(f.starts[i], end), key: live ? _keyFor(i) : null, textScaler: TextScaler.noScaling, strutStyle: readerStrut(widget.style)),
         ),
-        if (i > 0 || _head == 0) Positioned(top: view.top + 10, left: widget.margin, right: widget.margin, child: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: faint)),
-        if (widget.showFooter) Positioned(bottom: view.bottom + 10, left: widget.margin, right: widget.margin, child: ReaderFooter(status: widget.status, right: '${i + 1}/$_total · ${((widget.volumeProgress?.call((i + 1) / _total) ?? (i + 1) / _total) * 100).floor()}%', style: faint)),
+        if (i > 0 || f.head == 0) Positioned(top: view.top + 10, left: widget.margin, right: widget.margin, child: Text(f.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: faint)),
+        if (widget.showFooter) Positioned(bottom: view.bottom + 10, left: widget.margin, right: widget.margin, child: ReaderFooter(status: widget.status, right: '${i + 1}/${f.total} · ${((f.volumeProgress?.call((i + 1) / f.total) ?? (i + 1) / f.total) * 100).floor()}%', style: faint)),
       ],
     );
   }
 
-  void _tap(Offset local, Size size, Offset global) {
-    if (widget.menuOpen?.call() ?? false) return widget.onTapZone();
+  bool _tap(Offset local, Size size, Offset global) {
+    if (widget.menuOpen?.call() ?? false) {
+      widget.onTapZone();
+      return false;
+    }
     for (var k = 0; k < _cols; k++) {
-      final p = _page * _cols + k;
-      final m = p < _textPages ? markAt(_c, _keyFor(p), _starts[p], global) : null;
-      if (m != null) return widget.onMark(m);
+      final p = _page * _cols + k - _lead - _me.covers;
+      final m = p >= 0 && p < _textPages ? markAt(_c, _keyFor(p), _starts[p], global) : null;
+      if (m != null) {
+        widget.onMark(m);
+        return false;
+      }
     }
     switch (tapActionAt(widget.tapZone, widget.tapInvert, local, size, paged: true)) {
       case TapAction.prev:
@@ -804,19 +965,21 @@ class _PagedBodyState extends State<PagedBody> {
         _step(1);
       case TapAction.menu:
         widget.onTapZone();
+        return false;
     }
+    return true;
   }
 
   void _step(int delta) => widget.curl ? (delta > 0 ? _curl.next() : _curl.prev()) : _slide(delta);
 
   void _slide(int delta) {
     final target = _page + delta;
-    if (target < 0) return widget.onPrev?.call();
-    if (target >= _units) return widget.onNext?.call();
+    if (target < 0 && (!_canTurnPrev || !widget.animate)) return _reachStart();
+    if (target >= _units && (!_canTurnNext || !widget.animate)) return _reachEnd();
     if (widget.animate) {
-      _controller?.animateToPage(target, duration: const Duration(milliseconds: 180), curve: Curves.easeOut);
+      _controller?.animateToPage(target + _base, duration: const Duration(milliseconds: 180), curve: Curves.easeOut);
     } else {
-      _controller?.jumpToPage(target);
+      _controller?.jumpToPage(target + _base);
     }
   }
 
@@ -830,14 +993,14 @@ class _PagedBodyState extends State<PagedBody> {
         final size = Size(box.maxWidth / cols - pad.horizontal, box.maxHeight - pad.vertical);
         PagedBody.lastLayout = (size, cols);
         // 同样的版面（大小、样式、正文）不重复分页；开关菜单栏、拖滑块这类重建不会触发全文排版
-        final sig = Object.hash(size, cols, widget.style, _c.text.length, _c.text.hashCode, widget.title);
+        final sig = Object.hash(size, cols, widget.style, _c.text.length, _c.text.hashCode, widget.title, widget.volumeCover != null);
         if (sig != _sig) {
           final keep = _sig == null ? widget.startOffset : _cur;
           _sig = sig;
           _cols = cols;
           _width = size.width;
           _head = _hasText ? headingHeight(widget.title, widget.style, size.width) : 0;
-          _starts = _hasText ? paginate(_c.text, widget.style, size, strut: readerStrut(widget.style), firstTop: _head) : const [0];
+          _starts = _hasText ? _paged(_c, widget.title, size, _head) : const [0];
           _controller?.dispose();
           _controller = null;
           _page = _pageOf(keep);
@@ -849,10 +1012,12 @@ class _PagedBodyState extends State<PagedBody> {
             if (!mounted) return;
             if (_cur != widget.startOffset) widget.onOffset(_cur);
             // 往回翻落在上一章最后一页不算读完
-            if (_page >= _units - 1 && widget.startOffset < kToEnd) widget.onEnd();
+            if (_page >= _units - 1 && widget.startOffset < kToEnd && !widget.arrivedBack) widget.onEnd();
             _prefetch();
           });
         }
+        _prev = _flowOf(widget.prevChapter, size);
+        _next = _flowOf(widget.nextChapter, size);
         final Widget pages;
         if (widget.curl) {
           pages = PageCurl(
@@ -860,16 +1025,23 @@ class _PagedBodyState extends State<PagedBody> {
             controller: _curl,
             cover: widget.cover,
             dual: cols == 2,
-            pageCount: _units,
+            pageCount: _units + (_canTurnNext ? 1 : 0),
+            firstIndex: _canTurnPrev ? -1 : 0,
             initialIndex: _page,
             background: widget.background,
             pageBuilder: (context, i, live) => _pageContent(context, i, live, pad),
             onIndexChanged: _changed,
-            onReachStart: widget.onPrev,
-            onReachEnd: widget.onNext,
+            onReachStart: _reachStart,
+            onReachEnd: _reachEnd,
           );
         } else {
-          _controller ??= PageController(initialPage: _page);
+          final base = _canTurnPrev ? 1 : 0;
+          if (base != _base) {
+            _base = base;
+            _controller?.dispose();
+            _controller = null;
+          }
+          _controller ??= PageController(initialPage: _page + _base);
           pages = NotificationListener<ScrollNotification>(
             onNotification: (n) {
               if (n is ScrollStartNotification) _dragFrom = n.dragDetails == null ? null : _controller?.page;
@@ -877,21 +1049,31 @@ class _PagedBodyState extends State<PagedBody> {
               if (n is OverscrollNotification) _overscroll = n.overscroll;
               if (n is ScrollEndNotification) {
                 _dragFrom = null;
-                if (_overscroll > 0) widget.onNext?.call();
-                if (_overscroll < 0) widget.onPrev?.call();
+                final at = _controller?.page ?? 0;
+                final unit = at.round() - _base;
+                // 只认停稳的时候：手指按住正在滑的页面也会发结束通知
+                if ((at - at.round()).abs() < 0.01 && (unit < 0 || unit >= _units)) {
+                  _land(unit < 0 ? -1 : 1);
+                } else {
+                  if (_overscroll > 0) _reachEnd();
+                  if (_overscroll < 0) _reachStart();
+                }
                 _overscroll = 0;
               }
               return false;
             },
             child: PageView.builder(
-              key: ValueKey(sig),
+              key: ValueKey((sig, _base)),
               controller: _controller,
               // 拖一小段就翻页（不用拖过半屏）；对齐到整页由 SwipePagePhysics 自己做，所以关掉 pageSnapping
               pageSnapping: false,
               physics: SwipePagePhysics(origin: () => _dragFrom, parent: const ClampingScrollPhysics()),
-              itemCount: _units,
-              onPageChanged: _changed,
-              itemBuilder: (context, i) => _pageContent(context, i, true, pad),
+              itemCount: _base + _units + (_canTurnNext ? 1 : 0),
+              // 划到相邻章节那一屏时这里先不管，等停稳了才换章（见上面）
+              onPageChanged: (i) {
+                if (i - _base >= 0 && i - _base < _units) _changed(i - _base);
+              },
+              itemBuilder: (context, i) => _pageContent(context, i - _base, true, pad),
             ),
           );
         }
