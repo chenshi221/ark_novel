@@ -335,8 +335,12 @@ class SessionController extends Notifier<SessionState> {
   /// 有上次保存的账号信息就先当已登录，直接进主界面，确认在后台做，不在启动页干等。
   Future<void> restore() async {
     final epoch = ++_restoreEpoch;
-    await _restoreCookies();
-    if (!_cookiesReady.isCompleted) _cookiesReady.complete();
+    try {
+      await _restoreCookies();
+    } finally {
+      // 出错也要放行：等着它的书架同步、小组件跳转不能一直卡住
+      if (!_cookiesReady.isCompleted) _cookiesReady.complete();
+    }
     if (epoch != _restoreEpoch) return;
     final startup = _startup;
     _startup = false;

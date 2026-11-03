@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:ark_novel/next/app_prefs.dart';
 import 'package:ark_novel/next/bookmarks.dart';
+import 'package:ark_novel/next/library.dart';
 import 'package:ark_novel/next/rules.dart';
 import 'package:ark_novel/next/stats.dart';
 import 'package:ark_novel/next/sync.dart';
@@ -107,6 +108,33 @@ void main() {
     }));
     expect(box.get('bookmarks'), isEmpty);
     expect(box.get('rules'), isEmpty);
+  });
+
+  test('对方删了的书：只看加入时间，删除之后改名、阅读都照样移出；删除之后读过的记下来提示，推到过网站的排队从网站移出', () async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    Map<String, Object?> book(String aid, {String? bid, int ts = 0}) => {'aid': aid, 'title': 't$aid', 'img': '', 'added': 100, 'cats': <String>[], 'bid': bid, 'done': false, 'name': null, 'ts': ts};
+    LibraryStore.removedElsewhere.value = const [];
+    await box.put('lib:books', {'1': book('1', bid: 'b1'), '2': book('2'), '3': book('3', ts: now + 5000), '9': book('9')});
+    await box.put('progress:1', ['c', 0, now + 1000]); // 删除之后读过
+    await box.put('progress:2', ['c', 0, 50]); // 删除之前读的
+    final tomb = {'lib:1': now, 'lib:2': now, 'lib:3': now, 'lib:4': now};
+    await Sync.merge(remote(extra: {'cats': [], 'books': {'4': book('4', bid: 'x')..['ts'] = now + 5000}, 'tomb': tomb}));
+
+    expect((box.get('lib:books') as Map).keys, ['9']); // 对方删除之后改名的（3、4）也不回来
+    expect(box.get('lib:ops'), {'1': {'op': 'remove', 'bid': 'b1'}}); // 2 没推到过网站，不用管
+    expect(LibraryStore.removedElsewhere.value.map((b) => b.aid), ['1']);
+
+    // 加回书架：加入时间比墓碑新，再合并同一份墓碑也不删
+    final back = restoredBook(LibraryStore.removedElsewhere.value.single, {}, now + 2000);
+    await box.put('lib:books', {'1': back.toMap()});
+    await Sync.merge(remote(extra: {'cats': [], 'books': {}, 'tomb': tomb}));
+    expect((box.get('lib:books') as Map).keys, ['1']);
+    LibraryStore.removedElsewhere.value = const [];
+  });
+
+  test('对方的快照没有统计也能合并', () async {
+    await Sync.merge(remote()..remove('stats'));
+    expect(box.get('sync:stats:other'), '{}');
   });
 
   test('规则改动按修改时间：对方改得新就用对方的', () async {
@@ -213,6 +241,15 @@ void main() {
     expect(box.get('progress:7'), ['c', 3, 5000]);
     expect(files.keys.where((k) => k != 'other.json').length, 1);
     expect(jsonDecode(files['${Sync.deviceId}.json']!)['progress']['1'], ['a', 1, 100]);
+
+    // 有一个文件坏了：跳过它并报出来，别的设备照样合并
+    files['broken.json'] = 'not json';
+    files['other.json'] = jsonEncode(remote(extra: {
+      'progress': {'8': ['d', 4, 6000]},
+    }));
+    await expectLater(Sync.run(), throwsA(allOf(contains('已合并 1 台'), contains('broken.json'))));
+    expect(box.get('progress:8'), ['d', 4, 6000]);
+    files.remove('broken.json');
 
     await Sync.save(url: 'http://127.0.0.1:${server.port}/dav/', user: 'me', pass: 'wrong', folder: 'ArkNovel');
     await expectLater(Sync.run(), throwsA(contains('应用密码')));

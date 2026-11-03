@@ -12,7 +12,9 @@ import 'package:path_provider/path_provider.dart';
 
 import 'app_prefs.dart';
 import 'avatar.dart';
+import 'files.dart';
 import 'library.dart';
+import 'progress.dart';
 import 'settings.dart';
 import 'stats.dart';
 import 'updates.dart';
@@ -305,6 +307,7 @@ class Sync {
 
     // 书架分类（例如"在追"）与书架书籍（含重命名 name、所属分类 cats）
     final catIdMap = <String, String>{};
+    final readAfter = <LibBook>[]; // 被墓碑删掉、但本机在删除之后读过的书
     final localCatMap = <String, String>{}; // 本机分类换了 id：旧 → 新
     if (remote['cats'] != null || remote['books'] != null) {
       final cats = _maps(_box.get('lib:cats')).where((c) => !dead('cat:${c['id']}', ts(c))).toList();
@@ -335,13 +338,14 @@ class Sync {
       puts['lib:cats'] = cats;
 
       final validCatIds = {for (final c in cats) '${c['id']}'};
+      // 书的删除只看加入时间：删除之后改名、改分类、阅读都不让它回来，重新加入才算（[LibraryController.restore]）
       final localBooks = <String, Map<String, dynamic>>{};
+      final gone = <String, Map<String, dynamic>>{};
       for (final e in ((_box.get('lib:books') as Map?) ?? const {}).entries) {
         final aid = '${e.key}';
         final b = Map<String, dynamic>.from(e.value as Map);
         b['cats'] = {for (final c in ((b['cats'] as List?) ?? const []).cast<String>()) localCatMap[c] ?? c}.toList();
-        final bTime = max((b['added'] as int?) ?? 0, (b['ts'] as int?) ?? 0);
-        if (!dead('lib:$aid', bTime)) localBooks[aid] = b;
+        (dead('lib:$aid', (b['added'] as int?) ?? 0) ? gone : localBooks)[aid] = b;
       }
       for (final e in ((remote['books'] as Map?) ?? const {}).entries) {
         final aid = '${e.key}';
@@ -349,7 +353,7 @@ class Sync {
         final r = Map<String, dynamic>.from(e.value as Map);
         final rAdded = (r['added'] as int?) ?? 0;
         final rTs = (r['ts'] as int?) ?? 0;
-        if (dead('lib:$aid', max(rAdded, rTs))) continue;
+        if (dead('lib:$aid', rAdded)) continue;
         final rCats = {
           for (final c in ((r['cats'] as List?) ?? const []).cast<String>())
             if (validCatIds.contains(catIdMap[c] ?? c)) catIdMap[c] ?? c,
@@ -390,6 +394,18 @@ class Sync {
         }
       }
       puts['lib:books'] = localBooks;
+      final ops = Map<String, Object?>.from((_box.get('lib:ops') as Map?) ?? const {});
+      for (final MapEntry(key: aid, value: b) in gone.entries) {
+        if (localBooks.containsKey(aid)) continue; // 对方删了之后又重新加过
+        // 本机推到过网站书架的也从网站移出，不然下次对网站书架时又被加回来
+        if (b['bid'] != null) ops[aid] = {'op': 'remove', 'bid': b['bid']};
+        if (ReadingProgress.lastRead(aid) > tomb['lib:$aid']!) {
+          try {
+            readAfter.add(LibBook.fromMap(b));
+          } catch (_) {}
+        }
+      }
+      if (gone.isNotEmpty) puts['lib:ops'] = ops;
       await _renameCatRefs(localCatMap, puts);
     }
 
@@ -501,7 +517,7 @@ class Sync {
             if (await dir.exists()) await dir.delete(recursive: true);
             await dir.create(recursive: true);
             final dest = File(p.join(dir.path, 'avatar_$rTs$ext'));
-            await dest.writeAsBytes(bytes);
+            await writeFileAtomic(dest, bytes);
             puts['avatar'] = dest.path;
             puts['avatar:ts'] = rTs;
           } catch (_) {}
@@ -554,7 +570,7 @@ class Sync {
     }
 
     // 统计：单独存放；删掉的书从对方的统计里去掉（删除之后又读过的留下，见 ReadingStats.stripBook），本机的也删一次
-    final stats = Map<String, dynamic>.from(remote['stats'] as Map);
+    final stats = Map<String, dynamic>.from((remote['stats'] as Map?) ?? const {}); // 旧版快照可能没有
     final purged = Map<String, int>.from((_box.get('stats:purged') as Map?) ?? const {});
     final purge = <String, int>{};
     for (final e in tomb.entries.where((e) => e.key.startsWith('stats:'))) {
@@ -574,6 +590,7 @@ class Sync {
       await Volumes.refreshDone('$aid');
     }
     if (coverChanged) Volumes.changes.value++;
+    LibraryStore.noteRemovedElsewhere(readAfter);
     changes.value++;
   }
 
@@ -686,16 +703,23 @@ class Sync {
       final list = await dio.request(_dir(), options: Options(method: 'PROPFIND', headers: {'Depth': '1'}, responseType: ResponseType.plain));
       _ok(list, '读取目录');
       var merged = 0;
+      final failed = <String>[];
       for (final name in parseListing(list.data as String)) {
         if (name == '$deviceId.json') continue;
-        final r = await dio.get('${_dir()}${Uri.encodeComponent(name)}', options: Options(responseType: ResponseType.plain));
-        _ok(r, '下载 $name');
-        final remote = jsonDecode(r.data as String) as Map<String, dynamic>;
-        await _pullAvatar(dio, remote);
-        await merge(remote);
-        merged++;
+        // 一台设备的文件坏了（或者是认不得的格式）只跳过它，别的设备照样合并
+        try {
+          final r = await dio.get('${_dir()}${Uri.encodeComponent(name)}', options: Options(responseType: ResponseType.plain));
+          _ok(r, '下载 $name');
+          final remote = jsonDecode(r.data as String) as Map<String, dynamic>;
+          await _pullAvatar(dio, remote);
+          await merge(remote);
+          merged++;
+        } catch (_) {
+          failed.add(name);
+        }
       }
       await _box.put('sync:last', DateTime.now().millisecondsSinceEpoch);
+      if (failed.isNotEmpty) throw '已合并 $merged 台设备，这些文件读不了，跳过了：${failed.join('、')}';
       return merged;
     } finally {
       dio.close();

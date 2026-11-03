@@ -52,12 +52,35 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     ref.read(syncProvider.notifier).refreshProviders();
   }
 
+  /// 同步把本机删除之后还读过的书移出了书架：提示一下，可以一键加回。提示过就清掉，不点也不再提。
+  void _onRemovedElsewhere() {
+    final books = LibraryStore.removedElsewhere.value;
+    if (!mounted || books.isEmpty) return;
+    LibraryStore.removedElsewhere.value = const [];
+    final first = '《${books.first.shown}》';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(books.length == 1 ? '$first已在其他设备或网站上移出书架' : '$first等 ${books.length} 本已在其他设备或网站上移出书架'),
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: books.length == 1 ? '加回书架' : '全部加回',
+          // 点的时候再取：同步完会重建书架的 provider，提前拿的那个已经作废了
+          onPressed: () {
+            if (mounted) ref.read(libraryProvider.notifier).restore(books);
+          },
+        ),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
     // 打开时强制检查一次更新，之后应用在前台时每小时一次（进了后台 Dart 定时器基本不会触发）
     WidgetsBinding.instance.addObserver(this);
     Sync.changes.addListener(_onSyncChanged);
+    LibraryStore.removedElsewhere.addListener(_onRemovedElsewhere);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onRemovedElsewhere()); // 主界面重建前就记下的
     Future.microtask(_syncAndCheck);
     Sync.auto();
     // 清缓存、压图这些不急的活等主界面稳定了再做，不和第一屏抢 CPU 和磁盘
@@ -121,6 +144,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     Sync.changes.removeListener(_onSyncChanged);
+    LibraryStore.removedElsewhere.removeListener(_onRemovedElsewhere);
     _timer?.cancel();
     _maintenance?.cancel();
     _widgetTimer?.cancel();

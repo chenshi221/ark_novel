@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
@@ -7,6 +8,7 @@ import '../data/wenku8/wenku8_client.dart';
 import '../data/wenku8/wenku8_exceptions.dart';
 import 'catalog.dart';
 import 'data.dart';
+import 'progress.dart';
 import 'session.dart';
 import 'sync.dart';
 
@@ -108,6 +110,19 @@ Map<String, LibBook> reconcile(Map<String, LibBook> local, Map<String, RemoteBoo
   return out;
 }
 
+/// 网站书架对账移出的书里，上次对账（[since]）之后本机还读过的：要提示一下，可以加回来。
+/// 网站不告诉什么时候移出的，只能拿上次对账的时间近似；第一次对账（[since] 为 0）不算。
+List<LibBook> removedButRead(Map<String, LibBook> before, Map<String, LibBook> after, {required int since, required int Function(String aid) lastRead}) => [
+  if (since > 0)
+    for (final b in before.values)
+      if (!after.containsKey(b.aid) && lastRead(b.aid) > since) b,
+];
+
+/// 加回书架的书：加入时间重新算（比删除的墓碑新，同步不会再删），分类只留还在的，自己起的名字照旧；
+/// bid 清掉（网站上可能早就移出了），推到网站、下次对账再拿新的。
+LibBook restoredBook(LibBook b, Set<String> cats, int now) =>
+    LibBook(aid: b.aid, title: b.title, img: b.img, added: now, cats: [for (final c in b.cats) if (cats.contains(c)) c], done: b.done, name: b.name, ts: now);
+
 Box get _box => Hive.box('session');
 
 /// 不经 Riverpod 的只读查询（网页备份、图片缓存清理时判断哪些要留着）。
@@ -126,6 +141,17 @@ class LibraryStore {
   static Iterable<String> aids() => _raw.keys.cast<String>();
 
   static Iterable<String> covers() => _raw.values.map((m) => ((m as Map)['img'] as String?) ?? '').where((e) => e.isNotEmpty);
+
+  /// 同步时被移出书架（别的设备删了、网站书架上没了），但本机在那之后还读过的书。主界面看到就提示一下，可以一键加回（[LibraryController.restore]）。
+  static final removedElsewhere = ValueNotifier<List<LibBook>>(const []);
+
+  static void noteRemovedElsewhere(Iterable<LibBook> books) {
+    final list = [...removedElsewhere.value];
+    for (final b in books) {
+      if (!list.any((e) => e.aid == b.aid)) list.add(b);
+    }
+    if (list.length != removedElsewhere.value.length) removedElsewhere.value = list;
+  }
 }
 
 class LibraryState {
@@ -186,6 +212,18 @@ class LibraryController extends Notifier<LibraryState> {
     }
     await Sync.tombstone(removed);
     await _save(books);
+    unawaited(_push());
+  }
+
+  /// 把同步时被移出的书加回来（见 [LibraryStore.removedElsewhere]），分类和自己起的名字照旧。
+  Future<void> restore(List<LibBook> books) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final cats = {for (final c in state.cats) c.id};
+    final back = [for (final b in books) if (!state.books.containsKey(b.aid)) restoredBook(b, cats, now)];
+    if (back.isEmpty) return;
+    await _save({...state.books, for (final b in back) b.aid: b});
+    // 不走 [_queue]：同步排的「移出」要直接换成「加入」，不能当成本机加了又移、互相抵消（网站上可能早就移出了）
+    await _box.put('lib:ops', {..._ops(), for (final b in back) b.aid: {'op': 'add'}});
     unawaited(_push());
   }
 
@@ -293,7 +331,8 @@ class LibraryController extends Notifier<LibraryState> {
     if (s.offline) return force ? '现在是离线模式（没连上网站），点顶部的提示重新连接后再下拉' : null;
     if (_syncing) return force ? '正在同步，稍等一下' : null;
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (!force && now - ((_box.get('lib:sync') as int?) ?? 0) < 30 * 60 * 1000) return null;
+    final since = (_box.get('lib:sync') as int?) ?? 0;
+    if (!force && now - since < 30 * 60 * 1000) return null;
     _syncing = true;
     try {
       final api = ref.read(apiProvider);
@@ -316,7 +355,9 @@ class LibraryController extends Notifier<LibraryState> {
       final next = reconcile(state.books, remote, ops, now: now, firstImport: first);
       // 网站上被移除的：记下删除，不然别的设备下次同步又把它带回来
       await Sync.tombstone([for (final aid in state.books.keys) if (!next.containsKey(aid)) 'lib:$aid']);
+      final readAfter = removedButRead(state.books, next, since: since, lastRead: ReadingProgress.lastRead);
       await _save(next, cats);
+      LibraryStore.noteRemovedElsewhere(readAfter);
       await _box.put('lib:imported', s.user.uid);
       await _box.put('lib:sync', now);
       if (details) unawaited(prefetchDetails());
