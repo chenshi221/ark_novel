@@ -203,7 +203,11 @@ final wenku8ClientProvider = Provider<Wenku8Client>((ref) {
             url,
             referer: referer,
             proxy: ref.read(proxyProvider),
-            onSession: (cookies, ua) => ref.read(sessionProvider.notifier).acceptWebCookies(cookies, userAgent: ua),
+            onSession: (cookies, ua) {
+              final session = ref.read(sessionProvider.notifier);
+              // 退出登录不清 WebView 的 cookie：没登录时只收 Cloudflare 的，不把旧账号存回来
+              return session.acceptWebCookies(cookies, userAgent: ua, login: ref.read(sessionProvider) is SessionLoggedIn);
+            },
           ),
   );
   // shortcut: 换代理时旧适配器不关（Cronet 有请求在途时关闭可能出错），只有手动改代理才多留一个，真成问题再等请求结束后关
@@ -216,10 +220,8 @@ final imageDioProvider = Provider<Dio>((ref) {
   final store = ref.watch(sessionStoreProvider);
   final node = ref.watch(nodeProvider);
   ref.watch(proxyProvider);
-  final dio = Dio(BaseOptions(responseType: ResponseType.bytes, connectTimeout: const Duration(seconds: 12), receiveTimeout: const Duration(seconds: 25), headers: {'User-Agent': store.userAgent, 'Referer': '${siteBase(node)}/'}))
+  return Dio(BaseOptions(responseType: ResponseType.bytes, connectTimeout: const Duration(seconds: 12), receiveTimeout: const Duration(seconds: 25), headers: {'User-Agent': store.userAgent, 'Referer': '${siteBase(node)}/'}))
     ..httpClientAdapter = store.adapter();
-  ref.onDispose(dio.close);
-  return dio;
 });
 
 final wenku8UrlsProvider = Provider<Wenku8Urls>((ref) => Wenku8Urls(siteBase(ref.watch(nodeProvider)), CharsetType.gbk));
@@ -356,13 +358,13 @@ class SessionController extends Notifier<SessionState> {
   }
 
   /// 过完 Cloudflare 验证（或登录）后，WebView 里的 cookie 分流：登录 cookie 全站点通用，其余只属于验证过的站点。
-  Future<void> acceptWebCookies(String cookies, {String? userAgent}) async {
+  Future<void> acceptWebCookies(String cookies, {String? userAgent, bool login = true}) async {
     final pairs = cookies.split(';').map((e) => e.trim()).where((e) => e.contains('='));
-    final login = pairs.where((e) => e.startsWith('jieqi')).join(';');
+    final jieqi = pairs.where((e) => e.startsWith('jieqi')).join(';');
     final cf = pairs.where((e) => !e.startsWith('jieqi')).join(';');
     final host = _store.node.node;
     if (cf.isNotEmpty) await _store.setCfCookie(host, cf);
-    if (login.contains('jieqiUserInfo')) await _store.setCookie(login);
+    if (login && jieqi.contains('jieqiUserInfo')) await _store.setCookie(jieqi);
     if (userAgent != null && userAgent.isNotEmpty && userAgent != _store.userAgent) {
       await _store.setUserAgent(userAgent);
       _client.dio.options.headers['User-Agent'] = userAgent;

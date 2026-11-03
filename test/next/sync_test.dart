@@ -121,6 +121,14 @@ void main() {
     expect((box.get('rules') as List).single['ts'], at + 5);
   });
 
+  test('其他设备的统计更新后不会读到旧的解码结果', () async {
+    Map<String, dynamic> stats(int n) => {'stats': {'day': {}, 'book': {}, 'chapters': n, 'meta': {}, 'days': {}}};
+    await Sync.merge(remote(extra: stats(1)));
+    expect(ReadingStats.chapters, 1);
+    await Sync.merge(remote(extra: stats(2)));
+    expect(ReadingStats.chapters, 2);
+  });
+
   test('解析 PROPFIND 返回的文件名', () {
     const xml = '<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/ArkNovel/</d:href></d:response><d:response><d:href>/dav/ArkNovel/sub.json/</d:href></d:response><d:response><d:href>/dav/ArkNovel/d1%20a.json</d:href></d:response><d:response><d:href>/dav/ArkNovel/bad%ZZ.json</d:href></d:response></d:multistatus>';
     expect(Sync.parseListing(xml), ['d1 a.json', 'bad%ZZ.json']);

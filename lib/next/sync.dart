@@ -507,9 +507,20 @@ class Sync {
   }
 
   /// 其他设备的统计（设备 → 内容），统计页把它们加到本机数据上。
+  /// 统计页一次构建要调用几百次：原文没变就复用解码结果（只读，调用方不要改）。
   static Iterable<Map<String, dynamic>> otherStats() => [
-    for (final k in _keys('sync:stats:')) Map<String, dynamic>.from(jsonDecode(_box.get(k) as String) as Map),
+    for (final k in _keys('sync:stats:')) _decodeStats(k, _box.get(k) as String),
   ];
+
+  static final _statsCache = <String, (String, Map<String, dynamic>)>{};
+
+  static Map<String, dynamic> _decodeStats(String key, String raw) {
+    final hit = _statsCache[key];
+    if (hit != null && hit.$1 == raw) return hit.$2;
+    final m = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    _statsCache[key] = (raw, m);
+    return m;
+  }
 
   /// 导入备份文件（别的设备或本机导出的快照）：规则同同步；返回 false 表示这是本机自己导出的。
   static Future<bool> importBackup(String json) async {

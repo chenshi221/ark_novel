@@ -14,11 +14,14 @@ import 'paginator.dart';
 
 /// 章节：正文（已套用替换规则、统一缩进）、插图地址、高亮位置。
 class Chapter {
-  const Chapter({required this.text, required this.images, required this.marks});
+  const Chapter({required this.text, required this.images, required this.marks, this.locked = false});
 
   final String text;
   final List<String> images;
   final List<Mark> marks;
+
+  /// 受限书取不到正文，[text] 只是一句说明
+  final bool locked;
 }
 
 /// 往前翻章时用的"落在最后一页"标记（偏移量超出任何正文）。
@@ -352,7 +355,6 @@ class _ScrollBodyState extends State<ScrollBody> {
     if (off >= kToEnd) {
       _controller.jumpTo(max);
       widget.onOffset(_charAtTop());
-      widget.onEnd();
       return;
     }
     if (off > 0 && ro is RenderParagraph) {
@@ -846,7 +848,8 @@ class _PagedBodyState extends State<PagedBody> {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
             if (_cur != widget.startOffset) widget.onOffset(_cur);
-            if (_page >= _units - 1) widget.onEnd();
+            // 往回翻落在上一章最后一页不算读完
+            if (_page >= _units - 1 && widget.startOffset < kToEnd) widget.onEnd();
             _prefetch();
           });
         }

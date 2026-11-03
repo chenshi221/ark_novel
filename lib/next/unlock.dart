@@ -105,7 +105,6 @@ final appApiProvider = Provider<Wenku8AppApi>((ref) {
   ref.watch(proxyProvider);
   final dio = Dio(BaseOptions(responseType: ResponseType.bytes, connectTimeout: const Duration(seconds: 12), receiveTimeout: const Duration(seconds: 30)))
     ..httpClientAdapter = store.adapter();
-  ref.onDispose(dio.close);
   return Wenku8AppApi(dio: dio);
 });
 
