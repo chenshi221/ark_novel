@@ -50,11 +50,16 @@ class Wenku8Client {
 
   /// 把登录后拿到的 cookie 字符串（`a=1;b=2`）写入 cookie jar，对 [hosts] 里的每个节点都生效。
   Future<void> restoreCookie(String cookie, Iterable<String> hosts) async {
-    final cookies = cookie.split(';').map((e) => e.trim()).where((e) => e.contains('=')).map((e) {
+    final cookies = <Cookie>[];
+    for (final e in cookie.split(';').map((e) => e.trim()).where((e) => e.contains('='))) {
       final kv = e.split('=');
-      // dart:io 的 Cookie 不允许值里有空格、引号、逗号、分号、反斜杠（例如阅读记录 cookie 里的逗号），转义后再放进去
-      return Cookie(kv[0], kv.sublist(1).join('=').replaceAllMapped(RegExp(r'[ ",;\\]'), (m) => '%${m[0]!.codeUnitAt(0).toRadixString(16).toUpperCase()}'));
-    }).toList();
+      try {
+        // dart:io 的 Cookie 不允许值里有空格、引号、逗号、分号、反斜杠（例如阅读记录 cookie 里的逗号），转义后再放进去
+        cookies.add(Cookie(kv[0].trim(), kv.sublist(1).join('=').replaceAllMapped(RegExp(r'[ ",;\\]'), (m) => '%${m[0]!.codeUnitAt(0).toRadixString(16).toUpperCase()}')));
+      } on FormatException {
+        // 名字里有 dart:io 不认的字符：只跳过这一个，别让整批都放不进去
+      }
+    }
     for (final host in hosts) {
       await _cookieJar.saveFromResponse(Uri.parse(host), cookies);
     }

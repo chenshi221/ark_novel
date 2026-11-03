@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'app_prefs.dart';
 import 'cache.dart';
+import 'files.dart';
 import 'library.dart';
 import 'session.dart';
 import 'volumes.dart';
@@ -175,7 +176,7 @@ class ImageStore {
       } finally {
         _release();
       }
-      await file.writeAsBytes(bytes);
+      await writeFileAtomic(file, bytes);
     }
     _put(url, bytes);
     return bytes;
@@ -263,7 +264,7 @@ class ImageStore {
         try {
           final out = await _upscale.invokeMethod<Uint8List>('upscale', {'bytes': await _load(url)});
           if (out == null) throw StateError('empty');
-          await File(p.join((await _srDir()).path, _name(url))).writeAsBytes(out);
+          await writeFileAtomic(File(p.join((await _srDir()).path, _name(url))), out);
           (await _srIndex()).add(_name(url));
           _put('$url#sr', out);
           srVersion.value++;
@@ -317,13 +318,14 @@ class ImageStore {
     final box = Hive.box('session');
     if (box.get('imgShrunk2') == true) return;
     final dir = await _cacheDir();
-    await for (final f in dir.list()) {
-      if (f is! File) continue;
+    // 先列好再压：边列边写，临时文件会混进列表
+    for (final f in await dir.list().toList()) {
+      if (f is! File || _isTemp(f)) continue;
       final before = await f.readAsBytes();
       final after = await shrinkImage(before);
       if (!identical(after, before)) {
         final mtime = (await f.stat()).modified;
-        await f.writeAsBytes(after);
+        await writeFileAtomic(f, after);
         await f.setLastModified(mtime);
       }
     }
@@ -377,7 +379,7 @@ class ImageStore {
     var n = 0;
     for (final dir in [await _cacheDir(), if (srSupported) await _srDir()]) {
       await for (final f in dir.list()) {
-        if (f is File) n += await f.length();
+        if (f is File && !_isTemp(f)) n += await f.length();
       }
     }
     return n;
@@ -410,6 +412,8 @@ Future<Uint8List> shrinkImage(Uint8List b) async {
   }
 }
 
+bool _isTemp(File f) => f.path.endsWith('.tmp');
+
 bool _isGif(Uint8List b) => b.length > 3 && b[0] == 0x47 && b[1] == 0x49 && b[2] == 0x46;
 
 bool _isWebp(Uint8List b) => b.length > 12 && b[0] == 0x52 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x46 && b[8] == 0x57 && b[9] == 0x45 && b[10] == 0x42 && b[11] == 0x50;
@@ -423,7 +427,7 @@ Future<void> trimDir(Directory dir, int maxBytes, {Set<String> keep = const {}})
   final files = <(File, FileStat)>[];
   var total = 0;
   await for (final f in dir.list()) {
-    if (f is! File) continue;
+    if (f is! File || _isTemp(f)) continue; // 正在写的临时文件，一会儿就改名了
     final st = await f.stat();
     total += st.size;
     if (!keep.contains(p.basename(f.path))) files.add((f, st));

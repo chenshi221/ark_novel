@@ -131,4 +131,10 @@ void main() {
     final client = _client(_FakeAdapter({}));
     await client.restoreCookie('jieqiUserInfo=abc;jieqiRecentRead=1792527353,1792527401,1792527434', ['https://www.wenku8.net']);
   });
+
+  test('恢复 cookie 时名字不合法的只跳过那一个', () async {
+    final client = _client(_FakeAdapter({}));
+    await client.restoreCookie('a b=1; ok=2', ['https://www.wenku8.net']);
+    expect(await client.exportCookies('https://www.wenku8.net'), {'ok': '2'});
+  });
 }

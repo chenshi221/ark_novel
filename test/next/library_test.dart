@@ -42,6 +42,29 @@ void main() {
     expect(reconcile(local, {}, {}, now: 1).keys, ['synced']);
   });
 
+  test('网站书架上移出的书：上次对账之后读过的才提示，第一次对账不算', () {
+    const a = LibBook(aid: 'a', title: 'a', img: '', bid: 'x');
+    const b = LibBook(aid: 'b', title: 'b', img: '', bid: 'y');
+    const keep = LibBook(aid: 'k', title: 'k', img: '', bid: 'z');
+    final before = {'a': a, 'b': b, 'k': keep};
+    final read = {'a': 200, 'b': 50, 'k': 300};
+    int lastRead(String aid) => read[aid] ?? 0;
+    expect(removedButRead(before, {'k': keep}, since: 100, lastRead: lastRead).map((e) => e.aid), ['a']);
+    expect(removedButRead(before, {'k': keep}, since: 0, lastRead: lastRead), isEmpty);
+  });
+
+  test('加回书架：加入时间重新算，分类只留还在的，名字照旧，bid 清掉', () {
+    const old = LibBook(aid: '1', title: '原名', img: 'i', added: 5, cats: ['c1', 'gone'], bid: 'b1', done: true, name: '简称', ts: 6);
+    final b = restoredBook(old, {'c1'}, 99);
+    expect(b.added, 99);
+    expect(b.ts, 99);
+    expect(b.cats, ['c1']);
+    expect(b.shown, '简称');
+    expect(b.bid, isNull);
+    expect(b.done, true);
+    expect(b.img, 'i');
+  });
+
   test('自己改的显示名称：和网站同步、存取都保留', () {
     const b = LibBook(aid: '1', title: '原名', img: '', bid: 'b1', name: '简称');
     final out = reconcile({'1': b}, {'1': r('b1')}, {}, now: 1);
