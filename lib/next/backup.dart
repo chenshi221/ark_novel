@@ -67,6 +67,16 @@ class Backup {
   static Future<void> applyPending() async => apply(await _supportDir());
 
   static Future<void> pack(String out, String data, String supportDir) async {
+    var total = utf8.encode(data).length;
+    for (final d in _dirs) {
+      final dir = Directory(p.join(supportDir, d));
+      if (!await dir.exists()) continue;
+      await for (final f in dir.list().where((e) => e is File).cast<File>()) {
+        total += await f.length();
+      }
+    }
+    // 和 [unpack] 同一个上限：超了导出也恢复不了
+    if (total > _maxUnpackedBytes) throw const FormatException('备份超过 256 MB（多半是字体太多），删掉一些字体再导出');
     final zip = ZipFileEncoder()..create(out);
     zip.addArchiveFile(ArchiveFile.string('data.json', data));
     for (final d in _dirs) {

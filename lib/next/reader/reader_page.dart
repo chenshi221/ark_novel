@@ -68,7 +68,7 @@ final chapterProvider = FutureProvider.autoDispose.family<Chapter, (String, Stri
     } on ChapterLockedException catch (e) {
       // 受限书里取不到的章（多半是插图）：给一句说明照常往后翻；不存缓存，下次还会再试
       final text = formatChapter(e.message);
-      return Chapter(text: text, images: const [], marks: ReplaceRules.marks(text, null, key.$1));
+      return Chapter(text: text, images: const [], marks: ReplaceRules.marks(text, null, key.$1), locked: true);
     }
     // 读过的章节顺手存下来，断网也能再看；写失败不影响阅读。取的这会儿刚好清了缓存、或者开启了无痕阅读时不写回去
     if (!Incognito.on) {
@@ -528,7 +528,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   Future<void> _celebrate(int index, {required bool hasNext}) async {
     final v = Volumes.of(widget.aid)[index];
     if (!mounted || !_celebrated.add(v.title)) return;
-    _markRead();
+    if (!hasNext) _markRead(); // 有下一章时 _go 已标过，_cid 也已经换成下一章了
     _flushStats();
     final fallback = ref.read(novelProvider(widget.aid)).value?.detail.imgUrl ?? '';
     final cover = ref.read(volumeCoverQueueProvider).volCover(widget.aid, v, fallback);
@@ -563,6 +563,11 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     final v = Volumes.of(widget.aid).where((v) => v.cids.contains(_cid)).firstOrNull;
     if (v == null) return f;
     return (v.cids.indexOf(_cid) + f) / v.cids.length;
+  }
+
+  /// 正文读到底：受限章节只有一句说明，一打开就“到底”了，不算读过；往后翻过去时 [_go] 照常标记。
+  void _onEnd() {
+    if (ref.read(chapterProvider((widget.aid, _cid))).value?.locked != true) _markRead();
   }
 
   void _markRead() {
@@ -745,42 +750,37 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   Future<void> _editNote(ReplaceRule rule) async {
     final controller = TextEditingController(text: RuleNotes.get(widget.aid, rule.id));
     var color = rule.color;
-    final String? result;
-    try {
-      result = await showDialog<String>(
-        context: context,
-        builder: (context) => StatefulBuilder(
-          builder: (context, setLocal) => AlertDialog(
-            title: Text(rule.label),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(controller: controller, minLines: 3, maxLines: 8, decoration: const InputDecoration(hintText: '写点备注：身份、关系、伏笔……')),
-                  const SizedBox(height: 12),
-                  ColorPickerField(color: color, highlight: true, sample: rule.label.length > 8 ? rule.label.substring(0, 8) : rule.label, onChanged: (c) => setLocal(() => color = c)),
-                ],
-              ),
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: Text(rule.label),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: controller, minLines: 3, maxLines: 8, decoration: const InputDecoration(hintText: '写点备注：身份、关系、伏笔……')),
+                const SizedBox(height: 12),
+                ColorPickerField(color: color, highlight: true, sample: rule.label.length > 8 ? rule.label.substring(0, 8) : rule.label, onChanged: (c) => setLocal(() => color = c)),
+              ],
             ),
-            actions: [
-              if (rule.aid.isNotEmpty) TextButton(onPressed: () => Navigator.pop(context, 'remove'), child: const Text('取消高亮')),
-              TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-              TextButton(onPressed: () => Navigator.pop(context, 'save'), child: const Text('保存')),
-            ],
           ),
+          actions: [
+            if (rule.aid.isNotEmpty) TextButton(onPressed: () => Navigator.pop(context, 'remove'), child: const Text('取消高亮')),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+            TextButton(onPressed: () => Navigator.pop(context, 'save'), child: const Text('保存')),
+          ],
         ),
-      );
-      if (result == null) return;
-      final rules = ReplaceRules.all();
-      if (result == 'remove') {
-        await ReplaceRules.save([for (final r in rules) if (r.id != rule.id) r]);
-        await RuleNotes.set(widget.aid, rule.id, '');
-      } else {
-        await RuleNotes.set(widget.aid, rule.id, controller.text);
-        if (color != rule.color) await ReplaceRules.save([for (final r in rules) r.id == rule.id ? r.copyWith(color: color) : r]);
-      }
-    } finally {
-      controller.dispose();
+      ),
+    );
+    if (result == null) return;
+    final rules = ReplaceRules.all();
+    if (result == 'remove') {
+      await ReplaceRules.save([for (final r in rules) if (r.id != rule.id) r]);
+      await RuleNotes.set(widget.aid, rule.id, '');
+    } else {
+      await RuleNotes.set(widget.aid, rule.id, controller.text);
+      if (color != rule.color) await ReplaceRules.save([for (final r in rules) r.id == rule.id ? r.copyWith(color: color) : r]);
     }
     if (mounted) {
       ref.invalidate(chapterProvider);
@@ -871,7 +871,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       headingAccent: heading,
                       startOffset: _offset,
                       onOffset: _saveOffset,
-                      onEnd: _markRead,
+                      onEnd: _onEnd,
                       // 全书最后一章滑到底再往后：这卷刚读完就庆祝一下
                       onNext: next == null ? (_justFinished() == null ? null : () => _celebrate(_justFinished()!, hasNext: false)) : () => _go(next.cid),
                       nextLabel: next == null ? '读完了' : '下一章',
@@ -908,7 +908,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       color: palette.fg,
                       startOffset: _offset,
                       onOffset: _saveOffset,
-                      onEnd: _markRead,
+                      onEnd: _onEnd,
                       onPrev: prev == null ? null : () => _go(prev.cid, offset: kToEnd),
                       // 全书最后一章再往后翻：这卷刚读完就庆祝一下
                       onNext: next == null ? (_justFinished() == null ? null : () => _celebrate(_justFinished()!, hasNext: false)) : () => _go(next.cid),
@@ -1151,7 +1151,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                                   trailing: ChapterCache.has(widget.aid, c.cid) ? Icon(Icons.download_for_offline_outlined, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)) : null,
                                   onTap: () {
                                     Navigator.pop(context);
-                                    if (c.cid != _cid) _markBack();
+                                    if (c.cid == _cid) return;
+                                    _markBack();
                                     _go(c.cid);
                                   },
                                 ),

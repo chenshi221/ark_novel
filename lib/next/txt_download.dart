@@ -47,6 +47,5 @@ final txtDownloaderProvider = Provider<TxtDownloader>((ref) {
       headers: {'User-Agent': store.userAgent, 'Accept': '*/*'},
     ),
   )..httpClientAdapter = store.adapter();
-  ref.onDispose(dio.close);
   return TxtDownloader(dio);
 });
