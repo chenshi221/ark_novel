@@ -64,6 +64,9 @@ class FlowPages {
   int offsetOfUnit(int unit, int cols, int lead) => offsetOfPage(math.min(math.max(0, unit * cols - lead - covers), math.max(total - 1, 0)));
 }
 
+/// 双页时一页显示页眉、页脚的哪部分：[full] 全部（单页、或只有这一边是正文），[left] 章节名和时间电量，[right] 页码进度。
+enum _Chrome { full, left, right }
+
 /// 往前翻章时用的"落在最后一页"标记（偏移量超出任何正文）。
 const kToEnd = 1 << 30;
 
@@ -921,37 +924,54 @@ class _PagedBodyState extends State<PagedBody> {
   Widget _pageContent(BuildContext context, int unit, bool live, EdgeInsets pad) {
     if (_cols == 1) return _slot(context, unit, live, pad);
     final line = widget.color.withValues(alpha: 0.12);
+    // 页眉、页脚一屏只显示一份：两边都是正文页时，左页放章节名和时间电量，右页放页码进度；
+    // 只有一边是正文页（另一边是插图、封面或空着）时，那一页显示完整的一份
+    final left = unit * _cols, right = left + 1;
+    final split = _isText(left) && _isText(right);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch, // 两页都占满高度，不然字数不同时上下错开
       children: [
         for (var k = 0; k < _cols; k++) ...[
-          Expanded(child: _slot(context, unit * _cols + k, live, pad)),
+          Expanded(child: _slot(context, left + k, live, pad, chrome: !split ? _Chrome.full : (k == 0 ? _Chrome.left : _Chrome.right))),
           if (k < _cols - 1) VerticalDivider(width: 1, thickness: 1, indent: 24, endIndent: 24, color: line),
         ],
       ],
     );
   }
 
-  /// 排在第 [slot] 个位置的页：前面、后面排不下的是相邻章节的页，还没加载好就空着。
-  Widget _slot(BuildContext context, int slot, bool live, EdgeInsets pad) {
+  /// 第 [slot] 个位置是哪一章的第几页（含封面）；相邻章节没加载好、超出范围时为 null。
+  (FlowPages, int, bool)? _at(int slot) {
     final me = _me;
     final i = slot - _lead;
-    if (i >= 0 && i < me.count) return _flowPage(context, me, i, live, pad);
+    if (i >= 0 && i < me.count) return (me, i, true);
     final (other, j) = i < 0 ? (_prev, (_prev?.count ?? 0) + i) : (_next, i - me.count);
-    return other == null || j < 0 || j >= other.count ? const SizedBox.shrink() : _flowPage(context, other, j, false, pad);
+    return other == null || j < 0 || j >= other.count ? null : (other, j, false);
   }
 
-  Widget _flowPage(BuildContext context, FlowPages f, int i, bool live, EdgeInsets pad) {
+  /// 第 [slot] 个位置是正文页（不是封面、插图、空白）
+  bool _isText(int slot) {
+    final at = _at(slot);
+    if (at == null) return false;
+    final (f, i, _) = at;
+    return i >= f.covers && i - f.covers < f.textPages;
+  }
+
+  /// 排在第 [slot] 个位置的页：前面、后面排不下的是相邻章节的页，还没加载好就空着。
+  Widget _slot(BuildContext context, int slot, bool live, EdgeInsets pad, {_Chrome chrome = _Chrome.full}) {
+    final at = _at(slot);
+    if (at == null) return const SizedBox.shrink();
+    final (f, i, mine) = at;
     if (i < f.covers) return Center(child: NetImage(f.cover!, fit: BoxFit.contain));
-    return _single(context, f, i - f.covers, live, pad);
+    return _single(context, f, i - f.covers, live && mine, pad, chrome);
   }
 
-  Widget _single(BuildContext context, FlowPages f, int i, bool live, EdgeInsets pad) {
+  Widget _single(BuildContext context, FlowPages f, int i, bool live, EdgeInsets pad, _Chrome chrome) {
     final c = f.chapter;
     if (i >= f.textPages) return Center(child: NetImage(c.images[i - f.textPages], fit: BoxFit.contain));
     final end = i + 1 < f.starts.length ? f.starts[i + 1] : c.text.length;
     final faint = TextStyle(fontSize: 11, color: widget.color.withValues(alpha: 0.5));
     final view = MediaQuery.viewPaddingOf(context);
+    final progress = chrome == _Chrome.left ? '' : '${i + 1}/${f.total} · ${((f.volumeProgress?.call((i + 1) / f.total) ?? (i + 1) / f.total) * 100).floor()}%';
     return Stack(
       children: [
         // 页尾的换行会多出一个空行超出页面，所以不用 Column：标题单独放，正文往下让出标题的高度
@@ -960,8 +980,8 @@ class _PagedBodyState extends State<PagedBody> {
           padding: i == 0 ? pad.copyWith(top: pad.top + f.head) : pad,
           child: Text.rich(f.spanOf(f.starts[i], end), key: live ? _keyFor(i) : null, textScaler: TextScaler.noScaling, strutStyle: readerStrut(widget.style)),
         ),
-        if (i > 0 || f.head == 0) Positioned(top: view.top + 10, left: widget.margin, right: widget.margin, child: Text(f.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: faint)),
-        if (widget.showFooter) Positioned(bottom: view.bottom + 10, left: widget.margin, right: widget.margin, child: ReaderFooter(status: widget.status, right: '${i + 1}/${f.total} · ${((f.volumeProgress?.call((i + 1) / f.total) ?? (i + 1) / f.total) * 100).floor()}%', style: faint)),
+        if ((i > 0 || f.head == 0) && chrome != _Chrome.right) Positioned(top: view.top + 10, left: widget.margin, right: widget.margin, child: Text(f.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: faint)),
+        if (widget.showFooter) Positioned(bottom: view.bottom + 10, left: widget.margin, right: widget.margin, child: ReaderFooter(status: chrome == _Chrome.right ? null : widget.status, right: progress, style: faint)),
       ],
     );
   }
