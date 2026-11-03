@@ -415,17 +415,22 @@ void statsDeleteTests(Box Function() box) {
 
   test('别的设备删的书：本机只删删除那天及之前的，之后几天读的留下', () async {
     final b = box();
-    await b.put('stats:day', {'2026-01-01': 40, '2026-01-03': 70});
+    // 用最近的日期：墓碑超过 90 天会被清掉
+    final now = DateTime.now();
+    final d1 = ReadingStats.dayKey(now.subtract(const Duration(days: 3)));
+    final d3 = ReadingStats.dayKey(now.subtract(const Duration(days: 1)));
+    final noon = now.subtract(const Duration(days: 2));
+    final tomb = DateTime(noon.year, noon.month, noon.day, 12).millisecondsSinceEpoch;
+    await b.put('stats:day', {d1: 40, d3: 70});
     await b.put('stats:book', {'1': 90, '2': 20});
-    await b.put('stats:days:1', ['2026-01-01', '2026-01-03']);
-    await b.put('stats:ch:1', {'c': {'2026-01-01': 30, '2026-01-03': 60}});
-    final tomb = DateTime(2026, 1, 2, 12).millisecondsSinceEpoch;
+    await b.put('stats:days:1', [d1, d3]);
+    await b.put('stats:ch:1', {'c': {d1: 30, d3: 60}});
     final snap = {'v': 1, 'device': 'other', 'progress': {}, 'history': [], 'bookmarks': [], 'read': {}, 'readchars': {}, 'rating': {}, 'rules': [], 'notes': {}, 'tomb': {'stats:1': tomb}, 'stats': {'day': {}, 'book': {}, 'chapters': 0, 'meta': {}, 'days': {}, 'ch': {}}};
     await Sync.merge(snap);
-    expect(ReadingStats.bookDays('1'), ['2026-01-03']);
-    expect(ReadingStats.chapterSeconds('1'), {'c': {'2026-01-03': 60}});
+    expect(ReadingStats.bookDays('1'), [d3]);
+    expect(ReadingStats.chapterSeconds('1'), {'c': {d3: 60}});
     expect(ReadingStats.perBook(), {'1': 60, '2': 20});
-    expect(ReadingStats.perDay(), {'2026-01-01': 10, '2026-01-03': 70});
+    expect(ReadingStats.perDay(), {d1: 10, d3: 70});
     expect((b.get('stats:purged') as Map)['1'], tomb);
   });
 
