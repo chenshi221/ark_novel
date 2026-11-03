@@ -10,6 +10,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      platforms: ${{ steps.platforms.outputs.platforms }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -27,6 +29,25 @@ jobs:
             echo "::error::改了应用代码，至少要有一个 fix: 或 feat: 开头的提交"
             exit 1
           fi
+
+      - name: Decide which platforms to build
+        id: platforms
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # 手动运行时编译全部平台；PR 只编译改动涉及的平台，依赖变了才全编
+          platforms=android,macos,windows
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            files=$(git diff --name-only "$BASE...$HEAD")
+            if ! grep -qx pubspec.lock <<<"$files"; then
+              platforms=
+              grep -qE '^(lib|assets|android)/' <<<"$files" && platforms+=android,
+              grep -q '^macos/' <<<"$files" && platforms+=macos,
+              grep -q '^windows/' <<<"$files" && platforms+=windows,
+            fi
+          fi
+          echo "platforms=$platforms" | tee -a "$GITHUB_OUTPUT"
 
       - uses: subosito/flutter-action@v2
         with:
@@ -57,24 +78,29 @@ jobs:
             args: macos --release
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    # 保护规则要求这些任务都有结果，所以跳过步骤而不是跳过任务
     steps:
       - uses: actions/checkout@v7
+        if: contains(needs.check.outputs.platforms, matrix.platform)
 
       - uses: actions/setup-java@v6
-        if: matrix.platform == 'android'
+        if: matrix.platform == 'android' && contains(needs.check.outputs.platforms, matrix.platform)
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - uses: subosito/flutter-action@v2
+        if: contains(needs.check.outputs.platforms, matrix.platform)
         with:
           flutter-version: '3.47.4'
           channel: stable
           cache: true
 
       # flutter_inappwebview_macos 用 Swift Package Manager 编译会报错，改用 CocoaPods
-      - if: matrix.platform == 'macos'
+      - if: matrix.platform == 'macos' && contains(needs.check.outputs.platforms, matrix.platform)
         run: flutter config --no-enable-swift-package-manager
 
       - name: Build
+        if: contains(needs.check.outputs.platforms, matrix.platform)
         run: flutter build ${{ matrix.args }} -t lib/next/main.dart
