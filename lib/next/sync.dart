@@ -211,6 +211,7 @@ class Sync {
         'meta': _box.get('stats:meta') ?? const {},
         'days': byAid('stats:days:'),
         'ch': byAid('stats:ch:'),
+        'last': _box.get('stats:last') ?? const {},
       },
     };
   }
@@ -552,25 +553,23 @@ class Sync {
       }
     }
 
-    // 统计：单独存放；删掉的书从对方的统计里去掉（删除那天之后又读过的留下），本机的也删一次
+    // 统计：单独存放；删掉的书从对方的统计里去掉（删除之后又读过的留下，见 ReadingStats.stripBook），本机的也删一次
     final stats = Map<String, dynamic>.from(remote['stats'] as Map);
     final purged = Map<String, int>.from((_box.get('stats:purged') as Map?) ?? const {});
-    final purge = <String>[];
+    final purge = <String, int>{};
     for (final e in tomb.entries.where((e) => e.key.startsWith('stats:'))) {
       final aid = e.key.substring(6);
-      final last = ((stats['days'] as Map?)?[aid] as List?)?.cast<String>().fold('', (a, d) => d.compareTo(a) > 0 ? d : a) ?? '';
-      if (last.compareTo(ReadingStats.dayKey(DateTime.fromMillisecondsSinceEpoch(e.value))) <= 0) _stripBookStats(stats, aid);
-      if (e.value > (purged[aid] ?? 0)) {
-        purged[aid] = e.value;
-        purge.add(aid);
-      }
+      ReadingStats.stripBook(stats, aid, before: e.value);
+      if (e.value > (purged[aid] ?? 0)) purge[aid] = e.value;
     }
-    puts['stats:purged'] = purged;
     puts['sync:stats:${remote['device']}'] = jsonEncode(stats);
     await _box.putAll(puts);
-    for (final aid in purge) {
-      await ReadingStats.purgeLocal(aid);
+    // 先删本机的再记「删过了」：中途被打断的话下次合并会再删一次（按日期删，重复删没有副作用）
+    for (final MapEntry(key: aid, value: at) in purge.entries) {
+      await ReadingStats.purgeLocal(aid, before: at);
+      purged[aid] = at;
     }
+    if (purge.isNotEmpty) await _box.put('stats:purged', purged);
     for (final aid in ((remote['read'] as Map?) ?? const {}).keys) {
       await Volumes.refreshDone('$aid');
     }
@@ -595,20 +594,6 @@ class Sync {
     if (ids[def] != null) puts['p.${P.defaultCat}'] = ids[def];
   }
 
-  static void _stripBookStats(Map<String, dynamic> stats, String aid) {
-    final day = Map<String, dynamic>.from((stats['day'] as Map?) ?? const {});
-    for (final days in ((((stats['ch'] as Map?) ?? const {})[aid] as Map?) ?? const {}).values) {
-      for (final e in (days as Map).entries) {
-        final left = ((day['${e.key}'] as int?) ?? 0) - (e.value as int);
-        left > 0 ? day['${e.key}'] = left : day.remove('${e.key}');
-      }
-    }
-    stats['day'] = day;
-    for (final k in const ['book', 'meta', 'days', 'ch']) {
-      stats[k] = Map<String, dynamic>.from((stats[k] as Map?) ?? const {})..remove(aid);
-    }
-  }
-
   /// 删掉一本书的统计：记下墓碑（本机已删过，下次合并不用再删），已经同步来的其他设备的统计也去掉。
   static Future<void> forgetBookStats(String aid) async {
     await tombstone(['stats:$aid']);
@@ -617,7 +602,7 @@ class Sync {
     await _box.put('stats:purged', purged);
     for (final k in _keys('sync:stats:').toList()) {
       final stats = Map<String, dynamic>.from(jsonDecode(_box.get(k) as String) as Map);
-      _stripBookStats(stats, aid);
+      ReadingStats.stripBook(stats, aid, before: purged[aid]);
       await _box.put(k, jsonEncode(stats));
     }
   }

@@ -100,8 +100,17 @@ Future<(int, int)?> bookmarkPage(WidgetRef ref, BuildContext context, String aid
   final total = starts.length + c.images.length;
   if (total == 0) return null;
   final page = offset > c.text.length ? math.min(starts.length + offset - c.text.length - 1, total - 1) : (starts.isEmpty ? 0 : pageOfOffset(starts, offset));
-  final cover = cols == 2 && Volumes.of(aid).any((v) => v.cids.firstOrNull == cid) ? 1 : 0; // 双页时卷首多一页封面
+  // 双页时卷首多一页封面（和正文一样，取不到封面图就没有这一页）
+  final cover = cols == 2 && volumeCoverOf(ref, aid, cid, ref.read(novelProvider(aid)).value?.detail.imgUrl ?? '') != null ? 1 : 0;
   return ((page + cover) ~/ cols + 1, (total + cover + cols - 1) ~/ cols);
+}
+
+/// [cid] 是一卷的第一章时那一卷的封面，不是卷首或取不到图时为 null。正文和书签页码都用它，保证封面页算法一致。
+String? volumeCoverOf(WidgetRef ref, String aid, String cid, String fallback) {
+  final v = Volumes.of(aid).where((v) => v.cids.firstOrNull == cid).firstOrNull;
+  if (v == null) return null;
+  final url = ref.read(volumeCoverQueueProvider).volCover(aid, v, fallback);
+  return url.isEmpty ? null : url;
 }
 
 class _Palette {
@@ -584,10 +593,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   /// 这章是一卷的第一章时，那一卷的封面（宽屏双页才用）
   String? _coverOf(String cid, ReaderPrefs prefs, String fallback) {
     if (!prefs.dual || MediaQuery.sizeOf(context).width < 900) return null;
-    final v = Volumes.of(widget.aid).where((v) => v.cids.firstOrNull == cid).firstOrNull;
-    if (v == null) return null;
-    final url = ref.read(volumeCoverQueueProvider).volCover(widget.aid, v, fallback);
-    return url.isEmpty ? null : url;
+    return volumeCoverOf(ref, widget.aid, cid, fallback);
   }
 
   /// 正文读到底：受限章节只有一句说明，一打开就“到底”了，不算读过；往后翻过去时 [_go] 照常标记。
@@ -853,7 +859,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
       }
       if (prefs.prefetch > 0 && prefs.prefetchBook && !_bookQueued && !isWebPreview) {
         _bookQueued = true;
-        Future.microtask(() => _cacheBook(chapters, index, wifiOnly: prefs.prefetchWifi));
+        Future.microtask(() => _cacheBook(chapters, index));
       }
     }
 
@@ -1175,12 +1181,19 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   bool _bookQueued = false;
 
   /// 后台把整本的正文存到离线缓存（不含插图），一章一章慢慢取；先往后，再补前面。退出阅读器就停，下次打开接着来。
-  Future<void> _cacheBook(List<CatChapter> chapters, int index, {required bool wifiOnly}) async {
+  /// 每章之前都重新看一遍设置和网络：中途关掉开关、离开 Wi-Fi（开了仅 Wi-Fi 时）就停。
+  Future<void> _cacheBook(List<CatChapter> chapters, int index) async {
     final api = ref.read(apiProvider);
-    if (wifiOnly && !await onWifi()) return;
     for (final c in [...chapters.skip(index + 1), ...chapters.take(index)]) {
       if (!mounted || Incognito.on) return;
       if (ChapterCache.has(widget.aid, c.cid)) continue;
+      final prefs = ref.read(readerPrefsProvider);
+      if (prefs.prefetch <= 0 || !prefs.prefetchBook) {
+        _bookQueued = false; // 开关关掉了：重新打开时 build 会再排一次（已缓存的章直接跳过）
+        return;
+      }
+      if (prefs.prefetchWifi && !await onWifi()) return; // 不在 Wi-Fi：下次打开阅读器再说
+      if (!mounted) return;
       final ticket = ChapterCache.ticket(widget.aid, c.cid);
       try {
         final raw = await api.chapter(widget.aid, c.cid);

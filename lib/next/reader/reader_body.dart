@@ -64,6 +64,9 @@ class FlowPages {
   int offsetOfUnit(int unit, int cols, int lead) => offsetOfPage(math.min(math.max(0, unit * cols - lead - covers), math.max(total - 1, 0)));
 }
 
+/// 双页时一页显示页眉、页脚的哪部分：[full] 全部（单页、或只有这一边是正文），[left] 章节名和时间电量，[right] 页码进度。
+enum _Chrome { full, left, right }
+
 /// 往前翻章时用的"落在最后一页"标记（偏移量超出任何正文）。
 const kToEnd = 1 << 30;
 
@@ -755,6 +758,7 @@ class _PagedBodyState extends State<PagedBody> {
   @override
   void didUpdateWidget(PagedBody old) {
     super.didUpdateWidget(old);
+    _meCache = null; // spanOf、volumeProgress 是阅读页每次 build 新建的闭包
     final f = widget.follow;
     if (f == null || f == old.follow || _total == 0) return;
     final p = _pageOf(f);
@@ -776,7 +780,9 @@ class _PagedBodyState extends State<PagedBody> {
 
   bool get _hasText => _c.text.trim().isNotEmpty;
 
-  FlowPages get _me => FlowPages(chapter: _c, title: widget.title, spanOf: widget.spanOf, starts: _starts, head: _head, cover: _cols == 2 ? widget.volumeCover : null, volumeProgress: widget.volumeProgress);
+  // 本章的 FlowPages：每帧会被 _units、_total、_slot 等用很多次，排版变了或者 widget 换了才重建
+  FlowPages? _meCache;
+  FlowPages get _me => _meCache ??= FlowPages(chapter: _c, title: widget.title, spanOf: widget.spanOf, starts: _starts, head: _head, cover: _cols == 2 ? widget.volumeCover : null, volumeProgress: widget.volumeProgress);
 
   int get _lead => _cols == 2 ? widget.lead : 0;
 
@@ -817,17 +823,29 @@ class _PagedBodyState extends State<PagedBody> {
 
   void _reachStart() => _prev != null ? _land(-1) : widget.onPrev?.call();
 
+  // 相邻章节的标题高度和分页：同一个版面（排版变了就清空）里按章节对象、标题记住，菜单开关、拖滑块这类重建不再重新排标题
+  final _peekLayout = <(Chapter, String), (double, List<int>)>{};
+  (String?, String?)? _covers; // 上次提前解码过的相邻章节卷封面
+
   FlowPages? _flowOf(ChapterPeek? p, Size size) {
     if (p == null) return null;
-    final has = p.chapter.text.trim().isNotEmpty;
-    final head = has ? headingHeight(p.title, widget.style, size.width) : 0.0;
-    return FlowPages(chapter: p.chapter, title: p.title, spanOf: p.spanOf, starts: has ? _paged(p.chapter, p.title, size, head) : const [0], head: head, cover: _cols == 2 ? p.cover : null, volumeProgress: p.volumeProgress);
+    final key = (p.chapter, p.title);
+    var layout = _peekLayout[key];
+    if (layout == null) {
+      if (_peekLayout.length >= 4) _peekLayout.remove(_peekLayout.keys.first);
+      final has = p.chapter.text.trim().isNotEmpty;
+      final h = has ? headingHeight(p.title, widget.style, size.width) : 0.0;
+      layout = _peekLayout[key] = (h, has ? _paged(p.chapter, p.title, size, h) : const [0]);
+    }
+    final (head, starts) = layout;
+    return FlowPages(chapter: p.chapter, title: p.title, spanOf: p.spanOf, starts: starts, head: head, cover: _cols == 2 ? p.cover : null, volumeProgress: p.volumeProgress);
   }
 
   List<int> _paged(Chapter c, String title, Size size, double head) {
     final key = (size, widget.style, c.text, title);
-    final hit = _pageCache[key];
-    if (hit != null) return hit;
+    // 用过的挪到最后（LRU）：满了删最久没用的，正在读的这章不会被相邻章节挤掉
+    final hit = _pageCache.remove(key);
+    if (hit != null) return _pageCache[key] = hit;
     if (_pageCache.length >= 6) _pageCache.remove(_pageCache.keys.first);
     return _pageCache[key] = paginate(c.text, widget.style, size, strut: readerStrut(widget.style), firstTop: head);
   }
@@ -878,12 +896,18 @@ class _PagedBodyState extends State<PagedBody> {
     _prefetch();
   }
 
+  /// 本章和相邻章节的卷封面（只在双页时有）提前解码
+  void _precacheCovers() {
+    if (_imgBox.isEmpty || _cols != 2) return;
+    for (final cover in [widget.volumeCover, _prev?.cover, _next?.cover]) {
+      if (cover != null) NetImage.precache(context, cover, _imgBox, fit: BoxFit.contain);
+    }
+  }
+
   /// 插图章：整章的图按顺序在后台下好；前后一屏的图提前解码，翻过去直接出图（翻页时下一页才建出来）
   void _prefetch() {
     if (_imgBox.isEmpty) return;
-    for (final cover in [widget.volumeCover, _prev?.cover, _next?.cover]) {
-      if (cover != null && _cols == 2) NetImage.precache(context, cover, _imgBox, fit: BoxFit.contain);
-    }
+    _precacheCovers();
     if (_c.images.isEmpty) return;
     if (!identical(_fetched, _c)) {
       _fetched = _c;
@@ -900,37 +924,54 @@ class _PagedBodyState extends State<PagedBody> {
   Widget _pageContent(BuildContext context, int unit, bool live, EdgeInsets pad) {
     if (_cols == 1) return _slot(context, unit, live, pad);
     final line = widget.color.withValues(alpha: 0.12);
+    // 页眉、页脚一屏只显示一份：两边都是正文页时，左页放章节名和时间电量，右页放页码进度；
+    // 只有一边是正文页（另一边是插图、封面或空着）时，那一页显示完整的一份
+    final left = unit * _cols, right = left + 1;
+    final split = _isText(left) && _isText(right);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch, // 两页都占满高度，不然字数不同时上下错开
       children: [
         for (var k = 0; k < _cols; k++) ...[
-          Expanded(child: _slot(context, unit * _cols + k, live, pad)),
+          Expanded(child: _slot(context, left + k, live, pad, chrome: !split ? _Chrome.full : (k == 0 ? _Chrome.left : _Chrome.right))),
           if (k < _cols - 1) VerticalDivider(width: 1, thickness: 1, indent: 24, endIndent: 24, color: line),
         ],
       ],
     );
   }
 
-  /// 排在第 [slot] 个位置的页：前面、后面排不下的是相邻章节的页，还没加载好就空着。
-  Widget _slot(BuildContext context, int slot, bool live, EdgeInsets pad) {
+  /// 第 [slot] 个位置是哪一章的第几页（含封面）；相邻章节没加载好、超出范围时为 null。
+  (FlowPages, int, bool)? _at(int slot) {
     final me = _me;
     final i = slot - _lead;
-    if (i >= 0 && i < me.count) return _flowPage(context, me, i, live, pad);
+    if (i >= 0 && i < me.count) return (me, i, true);
     final (other, j) = i < 0 ? (_prev, (_prev?.count ?? 0) + i) : (_next, i - me.count);
-    return other == null || j < 0 || j >= other.count ? const SizedBox.shrink() : _flowPage(context, other, j, false, pad);
+    return other == null || j < 0 || j >= other.count ? null : (other, j, false);
   }
 
-  Widget _flowPage(BuildContext context, FlowPages f, int i, bool live, EdgeInsets pad) {
+  /// 第 [slot] 个位置是正文页（不是封面、插图、空白）
+  bool _isText(int slot) {
+    final at = _at(slot);
+    if (at == null) return false;
+    final (f, i, _) = at;
+    return i >= f.covers && i - f.covers < f.textPages;
+  }
+
+  /// 排在第 [slot] 个位置的页：前面、后面排不下的是相邻章节的页，还没加载好就空着。
+  Widget _slot(BuildContext context, int slot, bool live, EdgeInsets pad, {_Chrome chrome = _Chrome.full}) {
+    final at = _at(slot);
+    if (at == null) return const SizedBox.shrink();
+    final (f, i, mine) = at;
     if (i < f.covers) return Center(child: NetImage(f.cover!, fit: BoxFit.contain));
-    return _single(context, f, i - f.covers, live, pad);
+    return _single(context, f, i - f.covers, live && mine, pad, chrome);
   }
 
-  Widget _single(BuildContext context, FlowPages f, int i, bool live, EdgeInsets pad) {
+  Widget _single(BuildContext context, FlowPages f, int i, bool live, EdgeInsets pad, _Chrome chrome) {
     final c = f.chapter;
     if (i >= f.textPages) return Center(child: NetImage(c.images[i - f.textPages], fit: BoxFit.contain));
     final end = i + 1 < f.starts.length ? f.starts[i + 1] : c.text.length;
     final faint = TextStyle(fontSize: 11, color: widget.color.withValues(alpha: 0.5));
     final view = MediaQuery.viewPaddingOf(context);
+    final progress = chrome == _Chrome.left ? '' : '${i + 1}/${f.total} · ${((f.volumeProgress?.call((i + 1) / f.total) ?? (i + 1) / f.total) * 100).floor()}%';
     return Stack(
       children: [
         // 页尾的换行会多出一个空行超出页面，所以不用 Column：标题单独放，正文往下让出标题的高度
@@ -939,8 +980,8 @@ class _PagedBodyState extends State<PagedBody> {
           padding: i == 0 ? pad.copyWith(top: pad.top + f.head) : pad,
           child: Text.rich(f.spanOf(f.starts[i], end), key: live ? _keyFor(i) : null, textScaler: TextScaler.noScaling, strutStyle: readerStrut(widget.style)),
         ),
-        if (i > 0 || f.head == 0) Positioned(top: view.top + 10, left: widget.margin, right: widget.margin, child: Text(f.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: faint)),
-        if (widget.showFooter) Positioned(bottom: view.bottom + 10, left: widget.margin, right: widget.margin, child: ReaderFooter(status: widget.status, right: '${i + 1}/${f.total} · ${((f.volumeProgress?.call((i + 1) / f.total) ?? (i + 1) / f.total) * 100).floor()}%', style: faint)),
+        if ((i > 0 || f.head == 0) && chrome != _Chrome.right) Positioned(top: view.top + 10, left: widget.margin, right: widget.margin, child: Text(f.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: faint)),
+        if (widget.showFooter) Positioned(bottom: view.bottom + 10, left: widget.margin, right: widget.margin, child: ReaderFooter(status: chrome == _Chrome.right ? null : widget.status, right: progress, style: faint)),
       ],
     );
   }
@@ -1001,6 +1042,8 @@ class _PagedBodyState extends State<PagedBody> {
           _width = size.width;
           _head = _hasText ? headingHeight(widget.title, widget.style, size.width) : 0;
           _starts = _hasText ? _paged(_c, widget.title, size, _head) : const [0];
+          _meCache = null;
+          _peekLayout.clear();
           _controller?.dispose();
           _controller = null;
           _page = _pageOf(keep);
@@ -1018,6 +1061,14 @@ class _PagedBodyState extends State<PagedBody> {
         }
         _prev = _flowOf(widget.prevChapter, size);
         _next = _flowOf(widget.nextChapter, size);
+        // 相邻章节后来才加载好（预加载完成）时也要提前解码它们的卷封面，不然翻到那一屏时封面要现解码
+        final covers = (_prev?.cover, _next?.cover);
+        if (covers != _covers) {
+          _covers = covers;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _precacheCovers();
+          });
+        }
         final Widget pages;
         if (widget.curl) {
           pages = PageCurl(

@@ -492,7 +492,6 @@ class _StatsPageState extends ConsumerState<StatsPage> {
   }
 }
 
-/// GitHub 那样的阅读日历：一列一周（周一在上），越往右越近，颜色越深读得越久。格子数按宽度放得下多少周算。
 /// 管理阅读记录：所有读过的书，时长长的在前，可以一本本删掉。
 class _ManageStatsPage extends StatefulWidget {
   const _ManageStatsPage();
@@ -540,6 +539,7 @@ class _ManageStatsPageState extends State<_ManageStatsPage> {
   }
 }
 
+/// GitHub 那样的阅读日历：一列一周（周一在上），越往右越近，颜色越深读得越久。格子数按宽度放得下多少周算。
 class _Heatmap extends StatelessWidget {
   const _Heatmap({required this.perDay, required this.now});
 

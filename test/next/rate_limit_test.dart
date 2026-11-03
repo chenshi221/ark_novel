@@ -69,6 +69,7 @@ void main() {
     await Future.wait(jobs);
     expect(adapter.paths.map((p) => p.split('/').last.split('?').first), ['a', 'front', 'b', 'c']);
     expect(adapter.maxActive, 1);
-    expect(adapter.sent[3].difference(adapter.sent[2]), greaterThanOrEqualTo(const Duration(seconds: 1)));
+    // 限速器从派发时（_last）算间隔，这里量的是请求到达适配器的时间，中间有几微秒的抖动，所以留 5 毫秒误差
+    expect(adapter.sent[3].difference(adapter.sent[2]), greaterThanOrEqualTo(const Duration(seconds: 1) - const Duration(milliseconds: 5)));
   });
 }

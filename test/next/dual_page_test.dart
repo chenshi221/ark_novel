@@ -46,16 +46,21 @@ void main() {
     final nav = ReaderNav();
     final offsets = <int>[];
     await pump(t, width: 1200, dual: true, nav: nav, offsets: offsets);
-    expect(find.textContaining('1/'), findsOneWidget);
+    // 页脚一屏一份：页码进度只在右页
+    expect(find.textContaining('1/'), findsNothing);
     expect(find.textContaining('2/'), findsOneWidget);
     nav.next!();
     await t.pumpAndSettle();
-    expect(find.textContaining('3/'), findsOneWidget);
+    expect(find.textContaining('3/'), findsNothing);
     expect(find.textContaining('4/'), findsOneWidget);
+    // 页眉的章节名只在左页
+    expect(find.text('标题'), findsOneWidget);
+    expect(t.getTopLeft(find.text('标题')).dx, lessThan(600));
+    expect(t.getTopLeft(find.textContaining('4/')).dx, greaterThan(600));
     expect(offsets.last, greaterThan(0));
     nav.prev!();
     await t.pumpAndSettle();
-    expect(find.textContaining('1/'), findsOneWidget);
+    expect(find.textContaining('2/'), findsOneWidget);
   });
 
   testWidgets('窄屏或关闭双页时仍是单页', (t) async {

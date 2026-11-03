@@ -105,18 +105,77 @@ class ReadingStats {
     await Sync.forgetBookStats(aid);
   }
 
-  /// 删掉本机记的这本书。每天的时长只能减去按章记过的部分（这个功能加上之前的不知道属于哪本书）。
-  static Future<void> purgeLocal(String aid) async {
-    final day = _map('stats:day');
-    for (final days in _localChapterSeconds(aid).values) {
-      for (final e in days.entries) {
-        final left = (day[e.key] ?? 0) - e.value;
-        left > 0 ? day[e.key] = left : day.remove(e.key);
+  /// 从一份统计（同步时的格式：day / book / meta / days / ch / last）里去掉一本书在 [before]（毫秒时间戳）之前的记录，
+  /// [before] 为 null 时整本去掉。只记到天：删除那天的记录也去掉，除非这本书最后一次读是在删除之后（那天就整天留下）。
+  /// 每天的时长只能减去按章记过的部分（这个功能加上之前的不知道属于哪本书）；删完没有剩下的日子就整本去掉。
+  static void stripBook(Map<String, dynamic> stats, String aid, {int? before}) {
+    Map<String, dynamic> mapOf(String k) => Map<String, dynamic>.from((stats[k] as Map?) ?? const {});
+    final cut = before == null ? null : dayKey(DateTime.fromMillisecondsSinceEpoch(before));
+    final readAfter = before != null && (((stats['last'] as Map?)?[aid] as int?) ?? 0) > before;
+    bool drop(String day) => cut == null || day.compareTo(cut) < 0 || (day == cut && !readAfter);
+
+    final dayTotals = mapOf('day');
+    final book = mapOf('book');
+    final chAll = mapOf('ch');
+    final daysAll = mapOf('days');
+    var removed = 0;
+    final keptCh = <String, Map<String, int>>{};
+    for (final ce in ((chAll[aid] as Map?) ?? const {}).entries) {
+      if (ce.value is! Map) continue;
+      final kept = <String, int>{};
+      for (final de in (ce.value as Map).entries) {
+        final day = '${de.key}';
+        final sec = (de.value as num).toInt();
+        if (!drop(day)) {
+          kept[day] = sec;
+          continue;
+        }
+        removed += sec;
+        final left = ((dayTotals[day] as num?)?.toInt() ?? 0) - sec;
+        left > 0 ? dayTotals[day] = left : dayTotals.remove(day);
       }
+      if (kept.isNotEmpty) keptCh['${ce.key}'] = kept;
     }
-    final meta = Map.of((_box.get('stats:meta') as Map?) ?? const {})..remove(aid);
-    await _box.putAll({'stats:day': day, 'stats:book': _map('stats:book')..remove(aid), 'stats:meta': meta});
-    await _box.deleteAll(['stats:days:$aid', 'stats:ch:$aid']);
+    final keptDays = [for (final d in ((daysAll[aid] as List?) ?? const [])) '$d'].where((d) => !drop(d)).toList();
+    stats['day'] = dayTotals;
+    if (keptDays.isEmpty && keptCh.isEmpty) {
+      for (final k in const ['book', 'meta', 'days', 'ch', 'last']) {
+        stats[k] = mapOf(k)..remove(aid);
+      }
+      return;
+    }
+    final rest = ((book[aid] as num?)?.toInt() ?? 0) - removed;
+    rest > 0 ? book[aid] = rest : book.remove(aid);
+    stats['book'] = book;
+    stats['days'] = daysAll..[aid] = keptDays;
+    stats['ch'] = chAll..[aid] = keptCh;
+  }
+
+  /// 删掉本机记的这本书在 [before] 之前的记录（null 时全删），见 [stripBook]。
+  static Future<void> purgeLocal(String aid, {int? before}) async {
+    final s = <String, dynamic>{
+      'day': _map('stats:day'),
+      'book': _map('stats:book'),
+      'meta': Map<String, dynamic>.from((_box.get('stats:meta') as Map?) ?? const {}),
+      'days': {aid: (_box.get('stats:days:$aid') as List?) ?? const []},
+      'ch': {aid: _localChapterSeconds(aid)},
+      'last': _map('stats:last'),
+    };
+    stripBook(s, aid, before: before);
+    Map<String, int> ints(Object? m) => ((m as Map?) ?? const {}).map((k, v) => MapEntry('$k', (v as num).toInt()));
+    await _box.putAll({'stats:day': ints(s['day']), 'stats:book': ints(s['book']), 'stats:meta': s['meta'], 'stats:last': ints(s['last'])});
+    final days = (s['days'] as Map)[aid] as List?;
+    final ch = (s['ch'] as Map)[aid] as Map?;
+    if (days == null || days.isEmpty) {
+      await _box.delete('stats:days:$aid');
+    } else {
+      await _box.put('stats:days:$aid', days.cast<String>());
+    }
+    if (ch == null || ch.isEmpty) {
+      await _box.delete('stats:ch:$aid');
+    } else {
+      await _box.put('stats:ch:$aid', ch);
+    }
   }
 
   static Future<void> addSeconds(String aid, int seconds, {String? cid}) async {
@@ -136,6 +195,8 @@ class ReadingStats {
     book[aid] = (book[aid] ?? 0) + seconds;
     await _box.put('stats:day', day);
     await _box.put('stats:book', book);
+    // 最后一次读的时间：别的设备删了这本书的统计时，用来判断删除那天的记录是不是删之后读的
+    await _box.put('stats:last', _map('stats:last')..[aid] = DateTime.now().millisecondsSinceEpoch);
   }
 
   static Future<void> addChapter(String aid, String cid) async {
