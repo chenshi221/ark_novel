@@ -413,6 +413,45 @@ void statsDeleteTests(Box Function() box) {
     expect(ReadingStats.perBook()['1'], 5);
   });
 
+  test('别的设备删的书：本机只删删除那天及之前的，之后几天读的留下', () async {
+    final b = box();
+    await b.put('stats:day', {'2026-01-01': 40, '2026-01-03': 70});
+    await b.put('stats:book', {'1': 90, '2': 20});
+    await b.put('stats:days:1', ['2026-01-01', '2026-01-03']);
+    await b.put('stats:ch:1', {'c': {'2026-01-01': 30, '2026-01-03': 60}});
+    final tomb = DateTime(2026, 1, 2, 12).millisecondsSinceEpoch;
+    final snap = {'v': 1, 'device': 'other', 'progress': {}, 'history': [], 'bookmarks': [], 'read': {}, 'readchars': {}, 'rating': {}, 'rules': [], 'notes': {}, 'tomb': {'stats:1': tomb}, 'stats': {'day': {}, 'book': {}, 'chapters': 0, 'meta': {}, 'days': {}, 'ch': {}}};
+    await Sync.merge(snap);
+    expect(ReadingStats.bookDays('1'), ['2026-01-03']);
+    expect(ReadingStats.chapterSeconds('1'), {'c': {'2026-01-03': 60}});
+    expect(ReadingStats.perBook(), {'1': 60, '2': 20});
+    expect(ReadingStats.perDay(), {'2026-01-01': 10, '2026-01-03': 70});
+    expect((b.get('stats:purged') as Map)['1'], tomb);
+  });
+
+  test('删除那天：最后一次读在删除之后就整天留下，否则去掉', () {
+    final tomb = DateTime(2026, 1, 2, 12).millisecondsSinceEpoch;
+    Map<String, dynamic> stats(int last) => {
+      'day': {'2026-01-02': 50},
+      'book': {'1': 50},
+      'meta': {'1': {'t': 'a'}},
+      'days': {'1': ['2026-01-02']},
+      'ch': {'1': {'c': {'2026-01-02': 50}}},
+      'last': {'1': last},
+    };
+    final after = stats(tomb + 1000);
+    ReadingStats.stripBook(after, '1', before: tomb);
+    expect(after['book'], {'1': 50});
+    expect(after['days'], {'1': ['2026-01-02']});
+
+    final before = stats(tomb - 1000);
+    ReadingStats.stripBook(before, '1', before: tomb);
+    expect(before['book'], isEmpty);
+    expect(before['day'], isEmpty);
+    expect(before['meta'], isEmpty);
+    expect(before['ch'], isEmpty);
+  });
+
   test('别的设备删的书：本机只删一次，之后又读的不再被删', () async {
     final b = box();
     await b.put('stats:book', {'1': 90});
