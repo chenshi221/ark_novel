@@ -98,11 +98,24 @@ class SessionStore {
 
   Future<void> setKeepSeconds(int value) => _box.put('keepSeconds', value);
 
-  /// 记住的账号密码，没记住时为 null。用户名在 Hive，密码在 Keystore / 钥匙串。
-  /// 旧版本把密码明文存在 Hive 里，读到时搬到安全存储并删掉明文。
+  static bool get _useLocalPass => kIsWeb || Platform.isMacOS;
+
+  /// 记住的账号密码，没记住时为 null。用户名在 Hive，密码在安卓/iOS 放 Keystore/钥匙串，Mac 放沙盒本地库（避免无证书签名反复弹钥匙串密码框）。
   Future<(String, String)?> loadLogin() async {
     final user = _box.get('savedUser') as String?;
     if (user == null) return null;
+    if (_useLocalPass) {
+      var pass = _box.get('savedPass') as String?;
+      if (pass == null && _box.get('savedPassMoved') != true) {
+        // 旧版存在钥匙串里的搬过来，只试一次，免得反复弹窗
+        await _box.put('savedPassMoved', true);
+        try {
+          pass = await _secure.read(key: 'savedPass');
+          if (pass != null) await _box.put('savedPass', pass);
+        } catch (_) {}
+      }
+      return pass == null ? null : (user, pass);
+    }
     try {
       final legacy = _box.get('savedPass') as String?;
       if (legacy != null) {
@@ -117,6 +130,16 @@ class SessionStore {
   }
 
   Future<void> saveLogin(String? user, String? pass) async {
+    if (_useLocalPass) {
+      if (user == null || pass == null) {
+        await _box.delete('savedUser');
+        await _box.delete('savedPass');
+      } else {
+        await _box.put('savedUser', user);
+        await _box.put('savedPass', pass);
+      }
+      return;
+    }
     try {
       if (user == null || pass == null) {
         await _box.delete('savedUser');

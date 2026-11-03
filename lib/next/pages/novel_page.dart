@@ -310,7 +310,7 @@ class _BodyState extends ConsumerState<_Body> {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(intro, maxLines: _introOpen ? null : 5, overflow: TextOverflow.ellipsis, style: style),
+                Text(intro, maxLines: _introOpen ? null : 5, overflow: _introOpen ? null : TextOverflow.ellipsis, style: style),
                 if (over) TextButton(onPressed: () => setState(() => _introOpen = !_introOpen), child: Text(_introOpen ? '收起' : '展开')),
               ],
             );

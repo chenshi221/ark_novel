@@ -1,8 +1,8 @@
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/foundation.dart' show ValueListenable, listEquals;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent, ScrollDirection;
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -113,7 +113,7 @@ class _OptionsController extends Notifier<ShelfOptions> {
   }
 
   void set(ShelfOptions v) {
-    _box.put('shelfOpts', v.toMap());
+    _box.putAll({'shelfOpts': v.toMap(), 'sync:prefsTs': DateTime.now().millisecondsSinceEpoch});
     state = v;
   }
 }
@@ -264,6 +264,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
   @override
   void dispose() {
     shelfSearching.value = false;
+    _resumeHidden.dispose();
     _tc?.dispose();
     _tabScroll.dispose();
     super.dispose();
@@ -300,6 +301,9 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
     if (AppPrefs.read(P.lastTab, '') != id) AppPrefs.write(P.lastTab, id);
     if (id == _shown) return;
     _shown = id;
+    // 换标签就放出「继续阅读」条：新标签可能短到滚不动，收起了就再也出不来
+    _scrollAccum = 0;
+    _resumeHidden.value = false;
     final ctx = _keys[id]?.currentContext;
     if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 200), alignment: 0.5);
   }
@@ -421,17 +425,38 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
 
   String get _curTabName => allShelfTabs(ref.read(libraryProvider).cats).firstWhere((c) => c.id == _curTab, orElse: () => const LibCategory('', '默认')).name;
 
-  /// 往下滑书架时收起「继续阅读」条，往上滑或回到顶上再出来
-  bool _resumeHidden = false;
+  /// 往下滑书架时收起「继续阅读」条，往上滑或回到顶上再出来；用累计滑动距离防抖，避免触控板微动或视口变高后回弹反复触发
+  final _resumeHidden = ValueNotifier<bool>(false);
+  double _scrollAccum = 0;
 
-  bool _onShelfScroll(UserScrollNotification n) {
-    if (n.metrics.axis != Axis.vertical) return false;
-    final hide = switch (n.direction) {
-      ScrollDirection.reverse => true,
-      ScrollDirection.forward => false,
-      ScrollDirection.idle => n.metrics.pixels > 0 && _resumeHidden,
-    };
-    if (hide != _resumeHidden) setState(() => _resumeHidden = hide);
+  bool _onShelfScroll(ScrollNotification n) {
+    if (n.metrics.axis != Axis.vertical || n is! ScrollUpdateNotification) return false;
+    // 顶部或底部弹性越界回弹期间忽略位移，避免 Mac 滑到底部反弹时把「继续阅读」误呼出来
+    if (n.metrics.outOfRange) {
+      _scrollAccum = 0;
+      return false;
+    }
+    final dy = n.scrollDelta ?? 0;
+    if (dy == 0) return false;
+    // 贴近最底部时忽略向上回弹余波
+    if (dy < 0 && n.metrics.maxScrollExtent > 0 && n.metrics.pixels >= n.metrics.maxScrollExtent - 32) {
+      _scrollAccum = 0;
+      return false;
+    }
+    if ((dy > 0 && _scrollAccum < 0) || (dy < 0 && _scrollAccum > 0)) _scrollAccum = 0;
+    _scrollAccum += dy;
+    if (!_resumeHidden.value) {
+      // 可滚动余量太小时（比如宽屏一屏基本放得下），收起继续阅读条会让视口变高、滚动条直接消失，不收起
+      if (dy > 0 && _scrollAccum > 36 && n.metrics.pixels > 36 && n.metrics.maxScrollExtent > 160) {
+        _scrollAccum = 0;
+        _resumeHidden.value = true;
+      }
+    } else {
+      if (dy < 0 && (_scrollAccum < -28 || n.metrics.pixels <= 12)) {
+        _scrollAccum = 0;
+        _resumeHidden.value = false;
+      }
+    }
     return false;
   }
 
@@ -499,7 +524,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
           children: [
             if (!_searching && AppPrefs.read(P.resumeBar, true)) _ResumeBar(hidden: _resumeHidden),
             Expanded(
-              child: NotificationListener<UserScrollNotification>(
+              child: NotificationListener<ScrollNotification>(
                 onNotification: _onShelfScroll,
                 child: TabBarView(key: ObjectKey(tc), controller: tc, children: [for (final c in tabs) _Shelf(key: ValueKey(c.id), catId: c.id)]),
               ),
@@ -517,7 +542,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
 class _ResumeBar extends ConsumerWidget {
   const _ResumeBar({required this.hidden});
 
-  final bool hidden;
+  final ValueListenable<bool> hidden;
 
   static String _ago(DateTime t) {
     final d = DateTime.now().difference(t);
@@ -533,12 +558,32 @@ class _ResumeBar extends ConsumerWidget {
     valueListenable: Hive.box('session').listenable(keys: ['history2', 'resumeClosed']),
     builder: (context, box, _) {
       final h = ReadingHistory.all().firstOrNull;
-      final show = !hidden && h != null && box.get('resumeClosed') != h.aid;
-      return AnimatedSize(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-        alignment: Alignment.topCenter,
-        child: show ? _bar(context, ref, box, h) : const SizedBox(width: double.infinity),
+      if (h == null || box.get('resumeClosed') == h.aid) return const SizedBox.shrink();
+      final card = RepaintBoundary(child: _bar(context, ref, box, h));
+      return ValueListenableBuilder<bool>(
+        valueListenable: hidden,
+        builder: (context, isHidden, _) => TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: isHidden ? 0.0 : 1.0),
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeInOutCubic,
+          child: card,
+          builder: (context, t, child) {
+            if (t <= 0.001) return const SizedBox(width: double.infinity);
+            return ClipRect(
+              child: Align(
+                alignment: Alignment.topCenter,
+                heightFactor: t,
+                child: Opacity(
+                  opacity: Curves.easeIn.transform(t),
+                  child: Transform.translate(
+                    offset: Offset(0, -14 * (1 - t)),
+                    child: IgnorePointer(ignoring: isHidden, child: child),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
       );
     },
   );
@@ -568,7 +613,7 @@ class _ResumeBar extends ConsumerWidget {
           child: Stack(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
+                padding: const EdgeInsets.fromLTRB(12, 12, 42, 14),
                 child: Row(
                   children: [
                     Container(
@@ -592,24 +637,24 @@ class _ResumeBar extends ConsumerWidget {
                         ],
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 12),
                     IconButton.filled(
                       tooltip: '继续阅读',
-                      style: IconButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black87, fixedSize: const Size(46, 46)),
-                      icon: const Icon(Icons.play_arrow_rounded, size: 28),
+                      style: IconButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black87, fixedSize: const Size(44, 44)),
+                      icon: const Icon(Icons.play_arrow_rounded, size: 26),
                       onPressed: open,
                     ),
                   ],
                 ),
               ),
               Positioned(
-                top: 0,
-                right: 0,
+                top: 4,
+                right: 4,
                 child: IconButton(
                   tooltip: '关闭',
                   visualDensity: VisualDensity.compact,
-                  iconSize: 14,
-                  color: Colors.white54,
+                  iconSize: 16,
+                  color: Colors.white60,
                   icon: const Icon(Icons.close),
                   onPressed: () => box.put('resumeClosed', h.aid),
                 ),

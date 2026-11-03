@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,7 +25,21 @@ class NextApp extends ConsumerWidget {
       themeMode: ref.watch(themeModeProvider),
       routerConfig: ref.watch(routerProvider),
       scrollBehavior: const _MouseDragBehavior(),
-      builder: (context, child) => AppGuard(child: child ?? const SizedBox.shrink()),
+      builder: (context, child) {
+        Widget w = AppGuard(child: child ?? const SizedBox.shrink());
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS) {
+          final mq = MediaQuery.of(context);
+          final top = math.max(mq.padding.top, 28.0);
+          w = MediaQuery(
+            data: mq.copyWith(
+              padding: mq.padding.copyWith(top: top),
+              viewPadding: mq.viewPadding.copyWith(top: math.max(mq.viewPadding.top, 28.0)),
+            ),
+            child: w,
+          );
+        }
+        return w;
+      },
     );
   }
 }

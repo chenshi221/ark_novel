@@ -106,4 +106,20 @@ void main() {
     await Volumes.resetCover('5', '三');
     expect(Volumes.keptCovers(['5']), isNot(contains('u3')));
   });
+
+  test('先更新正文（无插图记为 ""）后补上插图章：自动清掉旧空封面记录，手动挑过的不动', () async {
+    await Volumes.saveCatalogue('6', [vol('第一卷', ['i1', 'a']), vol('第二卷', ['b'])]);
+    await Volumes.setCover('6', '第一卷', 'cover1');
+    await Volumes.setCover('6', '第二卷', ''); // 当时还没有插图章，记成了 ''
+    expect(Volumes.cover('6', '第二卷'), '');
+
+    // 后来第二卷补上了插图章 i2
+    await Volumes.saveCatalogue('6', [vol('第一卷', ['i1', 'a']), vol('第二卷', ['b', 'i2'])]);
+    expect(Volumes.cover('6', '第二卷'), isNull); // 自动清掉，等待重新取封面
+
+    // 如果是用户手动挑过的封面，即使插图章变化也保留用户挑的
+    await Volumes.setCover('6', '第二卷', 'custom#crop=0,0,0.5,1', picked: true);
+    await Volumes.saveCatalogue('6', [vol('第一卷', ['i1', 'a']), vol('第二卷', ['b', 'i2_new'])]);
+    expect(Volumes.cover('6', '第二卷'), 'custom#crop=0,0,0.5,1');
+  });
 }

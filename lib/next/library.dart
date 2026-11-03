@@ -8,6 +8,7 @@ import '../data/wenku8/wenku8_exceptions.dart';
 import 'catalog.dart';
 import 'data.dart';
 import 'session.dart';
+import 'sync.dart';
 
 /// 有多个译名的书，网站把第二个译名用括号包在书名最后：「败北女角太多了！(败犬女主太多了！)」。
 /// 拆成 [前面的, 括号里的] 给改名时挑；只看最后一组括号（前面的括号是书名本身的一部分），拆不出两个返回空。
@@ -29,7 +30,7 @@ List<String> titleAlternatives(String title) {
 
 /// 本地书架里的一本书。书架页只读本地，网站书架只是定期对一下。
 class LibBook {
-  const LibBook({required this.aid, required this.title, required this.img, this.added = 0, this.cats = const [], this.bid, this.done = false, this.name});
+  const LibBook({required this.aid, required this.title, required this.img, this.added = 0, this.cats = const [], this.bid, this.done = false, this.name, this.ts = 0});
 
   final String aid;
   final String title;
@@ -50,9 +51,12 @@ class LibBook {
   /// 自己起的显示名称；null 用网站上的书名 [title]（同步、打开详情会更新 [title]，不动它）
   final String? name;
 
+  /// 最近一次修改改名或分类的时间（毫秒），WebDAV 跨设备同步时按它决定哪边更新
+  final int ts;
+
   String get shown => name ?? title;
 
-  Map<String, Object?> toMap() => {'aid': aid, 'title': title, 'img': img, 'added': added, 'cats': cats, 'bid': bid, 'done': done, 'name': name};
+  Map<String, Object?> toMap() => {'aid': aid, 'title': title, 'img': img, 'added': added, 'cats': cats, 'bid': bid, 'done': done, 'name': name, 'ts': ts};
 
   static LibBook fromMap(Map m) => LibBook(
     aid: m['aid'] as String,
@@ -63,19 +67,21 @@ class LibBook {
     bid: m['bid'] as String?,
     done: (m['done'] as bool?) ?? false,
     name: m['name'] as String?,
+    ts: (m['ts'] as int?) ?? 0,
   );
 
-  LibBook copyWith({String? title, String? img, List<String>? cats, String? bid, bool? done}) =>
-      LibBook(aid: aid, title: title ?? this.title, img: img ?? this.img, added: added, cats: cats ?? this.cats, bid: bid ?? this.bid, done: done ?? this.done, name: name);
+  LibBook copyWith({String? title, String? img, List<String>? cats, String? bid, bool? done, int? ts}) =>
+      LibBook(aid: aid, title: title ?? this.title, img: img ?? this.img, added: added, cats: cats ?? this.cats, bid: bid ?? this.bid, done: done ?? this.done, name: name, ts: ts ?? this.ts);
 
-  LibBook withName(String? name) => LibBook(aid: aid, title: title, img: img, added: added, cats: cats, bid: bid, done: done, name: name);
+  LibBook withName(String? name, {int? ts}) => LibBook(aid: aid, title: title, img: img, added: added, cats: cats, bid: bid, done: done, name: name, ts: ts ?? this.ts);
 }
 
 class LibCategory {
-  const LibCategory(this.id, this.name);
+  const LibCategory(this.id, this.name, [this.ts = 0]);
 
   final String id;
   final String name;
+  final int ts;
 }
 
 /// 网站书架上的一本，[shelf] 是网站的书架分组 0~5。
@@ -137,13 +143,13 @@ class LibraryController extends Notifier<LibraryState> {
   @override
   LibraryState build() => LibraryState(
     {for (final e in ((_box.get('lib:books') as Map?) ?? const {}).entries) e.key as String: LibBook.fromMap(e.value as Map)},
-    [for (final m in ((_box.get('lib:cats') as List?) ?? const []).cast<Map>()) LibCategory(m['id'] as String, m['name'] as String)],
+    [for (final m in ((_box.get('lib:cats') as List?) ?? const []).cast<Map>()) LibCategory(m['id'] as String, m['name'] as String, (m['ts'] as int?) ?? 0)],
   );
 
   Future<void> _save(Map<String, LibBook> books, [List<LibCategory>? cats]) async {
     state = LibraryState(books, cats ?? state.cats);
     await _box.put('lib:books', {for (final b in books.values) b.aid: b.toMap()});
-    if (cats != null) await _box.put('lib:cats', [for (final c in cats) {'id': c.id, 'name': c.name}]);
+    if (cats != null) await _box.put('lib:cats', [for (final c in cats) {'id': c.id, 'name': c.name, 'ts': c.ts}]);
   }
 
   Map<String, Map> _ops() => ((_box.get('lib:ops') as Map?) ?? const {}).map((k, v) => MapEntry(k as String, Map.from(v as Map)));
@@ -162,17 +168,23 @@ class LibraryController extends Notifier<LibraryState> {
 
   Future<void> add(String aid, String title, String img, {List<String> cats = const []}) async {
     if (state.books.containsKey(aid)) return;
-    await _save({...state.books, aid: LibBook(aid: aid, title: title, img: img, added: DateTime.now().millisecondsSinceEpoch, cats: cats)});
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _save({...state.books, aid: LibBook(aid: aid, title: title, img: img, added: now, cats: cats, ts: now)});
     await _queue(aid, {'op': 'add'});
     unawaited(_push());
   }
 
   Future<void> remove(Iterable<String> aids) async {
     final books = {...state.books};
+    final removed = <String>[];
     for (final aid in aids) {
       final b = books.remove(aid);
-      if (b != null) await _queue(aid, {'op': 'remove', 'bid': b.bid});
+      if (b != null) {
+        removed.add('lib:$aid');
+        await _queue(aid, {'op': 'remove', 'bid': b.bid});
+      }
     }
+    await Sync.tombstone(removed);
     await _save(books);
     unawaited(_push());
   }
@@ -182,11 +194,14 @@ class LibraryController extends Notifier<LibraryState> {
     final b = state.books[aid];
     if (b == null) return;
     final n = name?.trim();
-    await _save({...state.books, aid: b.withName(n == null || n.isEmpty || n == b.title ? null : n)});
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _save({...state.books, aid: b.withName(n == null || n.isEmpty || n == b.title ? null : n, ts: now)});
   }
 
-  Future<void> setCats(Iterable<String> aids, List<String> cats) =>
-      _save({...state.books, for (final aid in aids) if (state.books[aid] != null) aid: state.books[aid]!.copyWith(cats: cats)});
+  Future<void> setCats(Iterable<String> aids, List<String> cats) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return _save({...state.books, for (final aid in aids) if (state.books[aid] != null) aid: state.books[aid]!.copyWith(cats: cats, ts: now)});
+  }
 
   /// 打开详情页拿到最新信息时顺手记下（书名、封面、是否完结）。
   Future<void> noteDetail(String aid, {required String title, required String img, required String status}) async {
@@ -196,17 +211,27 @@ class LibraryController extends Notifier<LibraryState> {
     if (next.title != b.title || next.img != b.img || next.done != b.done) await _save({...state.books, aid: next});
   }
 
-  Future<void> addCategory(String name) => _save(state.books, [...state.cats, LibCategory('c${DateTime.now().microsecondsSinceEpoch}', name)]);
+  Future<void> addCategory(String name) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return _save(state.books, [...state.cats, LibCategory('c${DateTime.now().microsecondsSinceEpoch}', name, now)]);
+  }
 
-  Future<void> renameCategory(String id, String name) => _save(state.books, [for (final c in state.cats) c.id == id ? LibCategory(id, name) : c]);
+  Future<void> renameCategory(String id, String name) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return _save(state.books, [for (final c in state.cats) c.id == id ? LibCategory(id, name, now) : c]);
+  }
 
   Future<void> reorderCategories(List<LibCategory> cats) => _save(state.books, cats);
 
   /// 删除分类：里面的书不删，只是不再属于它（没有别的分类就回到"默认"）。
-  Future<void> deleteCategory(String id) => _save(
-    {for (final b in state.books.values) b.aid: b.cats.contains(id) ? b.copyWith(cats: b.cats.where((c) => c != id).toList()) : b},
-    state.cats.where((c) => c.id != id).toList(),
-  );
+  Future<void> deleteCategory(String id) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await Sync.tombstone(['cat:$id']);
+    await _save(
+      {for (final b in state.books.values) b.aid: b.cats.contains(id) ? b.copyWith(cats: b.cats.where((c) => c != id).toList(), ts: now) : b},
+      state.cats.where((c) => c.id != id).toList(),
+    );
+  }
 
   bool _prefetching = false;
 
@@ -288,7 +313,10 @@ class LibraryController extends Notifier<LibraryState> {
         cats = [...cats, for (final n in used.toList()..sort()) if (!cats.any((c) => c.id == 'shelf$n')) LibCategory('shelf$n', shelfNames[n])];
       }
       final ops = {for (final e in _ops().entries) e.key: e.value['op'] as String};
-      await _save(reconcile(state.books, remote, ops, now: now, firstImport: first), cats);
+      final next = reconcile(state.books, remote, ops, now: now, firstImport: first);
+      // 网站上被移除的：记下删除，不然别的设备下次同步又把它带回来
+      await Sync.tombstone([for (final aid in state.books.keys) if (!next.containsKey(aid)) 'lib:$aid']);
+      await _save(next, cats);
       await _box.put('lib:imported', s.user.uid);
       await _box.put('lib:sync', now);
       if (details) unawaited(prefetchDetails());

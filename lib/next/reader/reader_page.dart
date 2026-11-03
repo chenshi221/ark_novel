@@ -33,6 +33,7 @@ import '../router.dart';
 import '../rules.dart';
 import '../settings.dart';
 import '../stats.dart';
+import '../sync.dart';
 import '../volumes.dart';
 import '../theme_doodle.dart';
 import '../theme_squire.dart';
@@ -310,6 +311,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     if (_speaking) _notice?.hide();
     WidgetsBinding.instance.removeObserver(this);
     _flushStats();
+    Sync.auto();
     WakelockPlus.disable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
