@@ -1,126 +1,149 @@
 > [!WARNING]
-> **编译出来就自己用，不要发到任何地方。** 本项目的前身 Hikari Novel 就是因为安装包被到处传而关停的。本仓库不提供、也不会发布任何安装包。
+> 本仓库不提供、也不会发布任何安装包，请自行编译
 
 <div align="center">
 
-<img src="./assets/images/logo.png" alt="Ark Novel" height="160">
+<img src="./assets/images/logo.png" alt="Ark Novel" height="140">
 
 # Ark Novel
 
-**把喜欢的轻小说装上方舟。**
-
-一个本地优先的轻小说文库（wenku8）第三方 Android 客户端，用 Flutter 编写。
+轻小说文库（wenku8）第三方客户端，基于 Flutter，支持 Android 和 macOS。
 
 <img alt="License" src="https://img.shields.io/badge/License-MIT-2F64A8?style=for-the-badge">
-<img alt="Platform" src="https://img.shields.io/badge/Platform-Android-FFB25B?style=for-the-badge&logo=android&logoColor=white">
+<img alt="Android" src="https://img.shields.io/badge/Android-arm64-3DDC84?style=for-the-badge&logo=android&logoColor=white">
+<img alt="macOS" src="https://img.shields.io/badge/macOS-Flutter-555555?style=for-the-badge&logo=apple&logoColor=white">
 
 </div>
 
-## ⛵ 为什么叫 Ark
+<div align="center">
+  <img src="./readme/mac_flip.jpg" width="88%" alt="macOS 双页阅读">
+</div>
 
-Ark 是「方舟」：书一旦上了船，就留在你自己的手机上。网站上不去、被 Cloudflare 拦住、没登录、没网，都不影响你接着读。书架、进度、书签、缓存的正文和封面全都存在本地，需要的话再通过 WebDAV 在多台设备之间同步。
+书架、阅读进度、书签和缓存的正文都保存在本地，没网或未登录时也能继续看；登录后可与网站书架同步，多设备之间可以通过 WebDAV 同步数据。
 
-## ✨ 功能
+> 截图中的正文已打码。
 
-**书架**
-- 本地书架：数据都存在本机，打开就有，离线可看，不登录也能用
-- 定期和网站书架双向同步：本地的加入、移出会推到网站，离线时先排队
-- 本地分类：一本书可以放进多个分类，分类可新建、改名、删除、拖动排序
-- 筛选（有未读、有缓存、已完结）、6 种排序，网格 / 紧凑 / 列表三种显示，封面上一键继续阅读
-- 卷册模式：每卷一张封面，可以从 [Bangumi](https://bgm.tv) 找各卷的封面，也可以自己挑
-- 检查更新：逐本检查新章节，「更新」页按日期分组
+## 截图
+
+<div align="center">
+  <img src="./readme/mac_cover.jpg" width="88%" alt="卷首封面与正文双页">
+</div>
+
+<div align="center">
+  <img src="./readme/mac_volumes.jpg" width="49%" alt="macOS 卷册页"> <img src="./readme/mac_discover.jpg" width="49%" alt="macOS 发现页">
+</div>
+
+<table>
+  <tr>
+    <td width="25%"><img src="./readme/phone_shelf.jpg" alt="书架"></td>
+    <td width="25%"><img src="./readme/phone_volumes.jpg" alt="卷册"></td>
+    <td width="25%"><img src="./readme/phone_reading.jpg" alt="阅读"></td>
+    <td width="25%"><img src="./readme/phone_stats.jpg" alt="统计"></td>
+  </tr>
+  <tr align="center">
+    <td>书架</td>
+    <td>卷册</td>
+    <td>阅读</td>
+    <td>统计</td>
+  </tr>
+</table>
+
+## 功能
 
 **阅读**
-- 上下滚动、左右滑动、仿真翻页、覆盖翻页；宽屏双页；音量键和键盘翻页
-- 字号、行距、页边距、字体（内置霞鹜文楷、思源宋体，也可以选自己的字体文件）、多种阅读背景、亮度遮罩
-- 页眉页脚显示时间、电量和本章进度
-- 朗读：句子高亮并自动翻页、定时停止、读完自动读下一章、手动翻页后从新位置接着读
-- 正则规则：替换（去广告、统一用字）和高亮（人物名染色、备注）
-- 书签、阅读历史、阅读统计，以及每本书的阅读报告（可存成图片分享）
+- 翻页模式：上下滚动、左右滑动、仿真翻页、覆盖翻页；宽屏支持双页显示，跨章节连续翻页
+- 操作方式：点击、拖动、鼠标滚轮、键盘方向键 / 空格，Android 支持音量键翻页（长按连续翻页）
+- 排版设置：字号、行距、页边距、字体（内置霞鹜文楷、思源宋体，支持导入本地字体）、背景配色、亮度遮罩
+- 朗读（TTS）：当前句高亮、自动翻页、定时停止、自动连读下一章
+- 正则规则：支持正文替换和高亮（可用于过滤固定文本、标记人名或添加批注）
 
-**离线**
-- 读过的章节自动缓存，并预取后面两章；可以缓存全本，也可以在目录里多选章节缓存
-- 详情和目录先显示本地存的，再联网刷新；封面和插图存在本地
-- 封面「提升清晰度」：在本机用超分模型把书架上的模糊封面放大
+**书架与记录**
+- 本地书架：支持离线使用；登录后可与网站书架双向同步，离线时的变更会在联网后同步
+- 分类与整理：支持一书多分类、筛选（未读 / 已缓存 / 已完结）、多种排序及视图切换
+- 卷册显示：按卷展示封面，支持从 [Bangumi](https://bgm.tv) 获取单卷封面或手动选择图片
+- 检查更新：支持逐本检查新章节，按更新时间分组显示
+- 阅读记录：书签、历史记录、书籍墙、阅读时长统计（支持按书清除）和单书阅读报告导出
+
+**离线缓存**
+- 阅读时自动缓存当前章节并预加载后续章节及插图
+- 支持打开书籍后在后台缓存整本正文（可关闭，或仅在 Wi-Fi 下执行），也支持在目录页多选章节手动缓存
+- 书籍详情与目录优先读取本地缓存，联网后静默刷新
+- 封面超分：内置 Real-ESRGAN 模型，可在本地放大模糊封面（仅 Android）
+
+**同步与备份**
+- WebDAV 同步：支持同步阅读进度、书架、书签、统计、正则规则和设置，可勾选同步项
+- 本地备份：导出为 zip 压缩包，包含书架、进度、统计、评分和设置（不含封面、正文缓存及账号密码）
 
 **其他**
-- 坚果云等 WebDAV 多设备同步（进度、书签、统计、规则）
-- 完整备份：导出成一个 zip，导入后书架、进度、统计、评分、更新和设置都恢复原状。封面和缓存的正文可以重新下载，不在备份里；登录信息、代理和 WebDAV 账号也不在，需要自己重新填
-- 发现页：推荐、排行、分类、完结；按书名或作者搜索；书评与回复
-- 详情页：目录倒序，多选章节批量标记已读 / 未读
-- 桌面小组件：显示最近在读的书，点一下直接继续
+- 发现页：推荐、排行榜、分类检索、完结列表、书名 / 作者搜索、书评查看与回复
+- Android 桌面小组件：显示最近阅读的书籍
 - 应用锁（生物识别 / 锁屏密码）、无痕模式
-- Material Design 3，深浅色，多套配色（含角色主题）；手机、平板自适应
-- 网络：可切换 wenku8.cc（默认）/ wenku8.net 线路，支持 HTTP 代理；默认走系统网络栈（Cronet），被 Cloudflare 拦截时用内置浏览器验证
+- Material Design 3 界面，支持深浅色模式与多套配色，针对 macOS 调整了标题栏与键鼠交互
+- 网络设置：可切换 `wenku8.cc` / `wenku8.net` 线路，支持 HTTP 代理，遇到 Cloudflare 拦截时可通过内置网页验证
 
-## 📱 支持平台
+## 平台
 
 | 平台 | 状态 |
 |---|---|
-| Android | 唯一支持的平台（release 包只含 arm64） |
-| iOS / macOS / Windows / Linux / Web | 不支持（Web 只在开发时用 `tool/preview_proxy.dart` 预览界面） |
+| Android | 支持（release 包仅含 arm64） |
+| macOS | 支持，需自行编译 |
+| iOS / Windows / Linux | 不支持 |
+| Web | 仅用于开发时通过 `tool/preview_proxy.dart` 预览界面 |
 
-## 🖼️ 截图
+## 编译
 
-发现 · 书架（卷册模式） · 一本书的各卷
+本项目不提供安装包，请自行编译使用（见顶部说明）。
 
-<div align="center">
-  <img src="./readme/1.jpg" width="30%"> <img src="./readme/2.jpg" width="30%"> <img src="./readme/3.jpg" width="30%">
-</div>
-
-阅读 · 书籍墙 · 阅读统计
-
-<div align="center">
-  <img src="./readme/4.jpg" width="30%"> <img src="./readme/5.jpg" width="30%"> <img src="./readme/6.jpg" width="30%">
-</div>
-
-## 💻 编译
-
-本项目不提供安装包，请自行编译、自己使用（见顶部警告）。
-
-1. 安装 [Flutter](https://docs.flutter.dev/get-started/install)（开发用的是 stable 3.47）
-2. 克隆本仓库，执行 `flutter pub get`
+1. 安装 [Flutter](https://docs.flutter.dev/get-started/install)（开发环境为 stable 3.47）；编译 macOS 版需安装 Xcode
+2. 克隆仓库并安装依赖：`flutter pub get`
 3. 编译：
 
    ```bash
+   # Android
    flutter build apk --release --target-platform android-arm64 --dart-define=cronetHttpNoPlay=true --obfuscate --split-debug-info=build/symbols -t lib/next/main.dart
+
+   # macOS
+   flutter build macos --release -t lib/next/main.dart
    ```
 
-   - `cronetHttpNoPlay`：让系统网络栈使用内置的 Cronet，不依赖 Google 服务
-   - `--obfuscate --split-debug-info`：把调试符号拆到安装包外，包更小；崩溃堆栈需要用 `build/symbols` 还原
-4. 测试：`flutter test`
+   - `cronetHttpNoPlay`：使用内置 Cronet 网络栈，不依赖 Google Play 服务
+   - `--obfuscate --split-debug-info`：拆分调试符号以减小体积，崩溃堆栈需通过 `build/symbols` 还原
+4. 运行测试：`flutter test`
 
-入口是 `lib/next/main.dart`（`lib/main.dart` 只是转过去）。
+项目入口为 `lib/next/main.dart`（`lib/main.dart` 仅作转发）。
 
-### 从 Hikari Novel（本项目改名前的版本）迁移
+<details>
+<summary>从旧版（Hikari Novel）迁移数据</summary>
 
-改名后 Android 包名变成了 `io.github.chenshi221.ark_novel`，系统会把它当作一个新 App，旧版不会被覆盖升级，数据也不会自动带过来。迁移方法任选一种：
+改名后 Android 包名变更为 `io.github.chenshi221.ark_novel`，系统会视为独立应用，无法直接覆盖安装。可通过以下任一方式迁移数据：
 
-- **本地备份**：在旧版「设置 → 数据与存储 → 导出完整备份」，装好 Ark Novel 后在同一位置「导入备份」。旧版导出的是 JSON，只合并、不覆盖，也不含更新记录、卷列表和按章统计，数据墙和更新页要之后才会慢慢补上
-- **WebDAV 同步**：旧版先同步一次，然后在坚果云网页里把同步文件夹 `hikari` 改名为 `ArkNovel`（Ark Novel 的默认同步文件夹），Ark Novel 填上同样的账号同步即可。也可以不改名，直接在 Ark Novel 的同步设置里把文件夹填成 `hikari`
+- **本地备份**：在旧版「设置 → 数据与存储 → 导出完整备份」，安装 Ark Novel 后在同一位置导入。旧版备份为 JSON 格式，导入时只合并、不覆盖，且不含更新记录、卷列表和按章统计
+- **WebDAV 同步**：旧版先执行一次同步，随后将网盘中的 `hikari` 文件夹改名为 `ArkNovel`（或在 Ark Novel 的同步设置中将目录改为 `hikari`），再登录同一账号同步
 
-确认数据都过来以后，再卸载旧版。
+确认数据完整迁移后再卸载旧版。
 
-## 📣 声明
+</details>
 
-- 本项目出于兴趣和学习移动端开发而制作，仅用于学习和测试
-- 所用接口均来自轻小说文库官方网站的公开页面，不提供任何破解内容
-- 本项目是个人项目，与轻小说文库官方无关
+## 声明
 
-## 🙏 致谢
+- 本项目出于个人兴趣与客户端开发学习制作，仅限学习交流使用
+- 所有数据均来自轻小说文库公开页面，不提供任何破解或付费内容
+- 本项目为个人项目，与轻小说文库官方无关
 
-Ark Novel 源自 [15dd/hikari_novel_flutter](https://github.com/15dd/hikari_novel_flutter)。**Hikari Novel 由 [15dd](https://github.com/15dd) 创作**，也感谢原项目的其他贡献者（cyh128、HExplorers-Smx、Hexplore 等）。
+## 致谢
 
-在原项目的基础上，Ark Novel 改用了新的框架（Riverpod + go_router）重写界面，加入了本地书架、离线阅读、朗读、同步等功能。网站请求和解析层（`lib/data/wenku8`）仍然沿用原项目的实现。Ark Novel 的问题请在本仓库提 issue，不要去打扰原作者。
+Ark Novel 衍生自 [15dd/hikari_novel_flutter](https://github.com/15dd/hikari_novel_flutter)。**原项目 Hikari Novel 由 [15dd](https://github.com/15dd) 开发**，同时感谢原项目的其他贡献者（cyh128、HExplorers-Smx、Hexplore 等）。
 
-还要感谢这些项目：
+Ark Novel 在原项目基础上使用 Riverpod + go_router 重写了界面，并增加了本地书架、离线阅读、朗读、同步等功能；网络请求与解析层（`lib/data/wenku8`）仍沿用原项目实现。遇到问题请在本仓库提 issue，请勿打扰原作者。
 
-- [mihon](https://github.com/mihonapp/mihon)：本地书架、分类、筛选的设计参考
-- [flutter_dmzj](https://github.com/xiaoyaocz/flutter_dmzj)、[venera](https://github.com/venera-app/venera)、[mikan_flutter](https://github.com/iota9star/mikan_flutter)、[pilipala](https://github.com/guozhigq/pilipala)、[PiliPalaX](https://github.com/orz12/PiliPalaX)、[PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus)：原项目的参考
-- [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)：封面「提升清晰度」使用的 realesr-animevideov3 模型（BSD-3-Clause，© Xintao Wang），转成 TFLite 后放在 `android/app/src/main/assets/sr_x4.tflite`
-- [Bangumi](https://bgm.tv)：各卷封面来源
+同时感谢以下项目：
+
+- [mihon](https://github.com/mihonapp/mihon)：本地书架、分类与筛选交互参考
+- [flutter_dmzj](https://github.com/xiaoyaocz/flutter_dmzj)、[venera](https://github.com/venera-app/venera)、[mikan_flutter](https://github.com/iota9star/mikan_flutter)、[pilipala](https://github.com/guozhigq/pilipala)、[PiliPalaX](https://github.com/orz12/PiliPalaX)、[PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus)：原项目参考的开源项目
+- [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)：封面超分使用的 `realesr-animevideov3` 模型（BSD-3-Clause，© Xintao Wang），转换为 TFLite 格式存放于 `android/app/src/main/assets/sr_x4.tflite`
+- [Bangumi](https://bgm.tv)：单卷封面数据来源
 - [霞鹜文楷](https://github.com/lxgw/LxgwWenKai)、[思源宋体](https://github.com/notofonts/noto-cjk)：内置字体
 
-## 📄 许可证
+## 许可证
 
-[MIT](./LICENSE)。原始代码 © 2026 [15dd](https://github.com/15dd)，Ark Novel 的修改 © 2026 [chenshi221](https://github.com/chenshi221)，原作者的版权声明保留不变。
+[MIT](./LICENSE)。原始代码 © 2026 [15dd](https://github.com/15dd)，修改部分 © 2026 [chenshi221](https://github.com/chenshi221)，保留原作者版权声明。
