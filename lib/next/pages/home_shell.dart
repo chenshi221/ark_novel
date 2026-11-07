@@ -176,7 +176,24 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
   }
 
   /// 按顺序来：书架 → 目录（检查更新）→ 卷封面 → 详情。第一次打开要取的东西很多，看得见的先取，详情最后。
-  Future<void> _syncAndCheck() async {
+  Future<void>? _syncRun;
+  bool _syncAgain = false;
+
+  /// 启动时和登录状态变成在线时都会调：正在跑就等这次跑完再来一遍，不同时跑两份。
+  Future<void> _syncAndCheck() {
+    if (_syncRun != null) {
+      _syncAgain = true;
+      return _syncRun!;
+    }
+    return _syncRun = () async {
+      do {
+        _syncAgain = false;
+        await _syncOnce();
+      } while (_syncAgain && mounted);
+    }().whenComplete(() => _syncRun = null);
+  }
+
+  Future<void> _syncOnce() async {
     await ref.read(sessionProvider.notifier).ready; // 启动时第一帧就进了主界面，cookie 可能还没放好
     if (!mounted) return;
     final library = ref.read(libraryProvider.notifier);
