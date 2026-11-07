@@ -182,10 +182,14 @@ class Backup {
   static bool _wanted(String k) => _exact.contains(k) || _prefixes.any(k.startsWith);
 
   /// 导入旧版的 JSON 备份：只合并，不覆盖现有的。同步快照按同步规则并入（本机自己导出的跳过）；书架里没有的书、没有的分类补上；
-  /// 其余设置只补本机还没有的。返回恢复了多少本书。
+  /// 其余设置只补本机还没有的；删除过（有墓碑）的书和分类不补回来。返回恢复了多少本书。
   static Future<int> restore(String json) async {
     final m = jsonDecode(json) as Map<String, dynamic>;
-    if (m['device'] != Sync.deviceId) await Sync.importBackup(json);
+    try {
+      await Sync.importBackup(json);
+    } on StaleSnapshotException {
+      // 太旧的快照不按同步规则合并，下面只补书架上还没有、也没删过的书
+    }
     final extra = (m['extra'] as Map?) ?? const {};
     var books = 0;
     for (final e in extra.entries) {
@@ -194,7 +198,7 @@ class Backup {
       if (k == 'lib:books') {
         final mine = Map.of((_box.get(k) as Map?) ?? const {});
         for (final b in (e.value as Map).entries) {
-          if (!mine.containsKey(b.key)) {
+          if (!mine.containsKey(b.key) && !Sync.isDeleted('lib:${b.key}', ((b.value as Map)['added'] as int?) ?? 0)) {
             mine[b.key] = b.value;
             books++;
           }
@@ -203,7 +207,11 @@ class Backup {
       } else if (k == 'lib:cats') {
         final mine = ((_box.get(k) as List?) ?? const []).cast<Map>().toList();
         final ids = mine.map((c) => c['id']).toSet();
-        await _box.put(k, [...mine, for (final c in (e.value as List).cast<Map>()) if (!ids.contains(c['id'])) c]);
+        await _box.put(k, [
+          ...mine,
+          for (final c in (e.value as List).cast<Map>())
+            if (!ids.contains(c['id']) && !Sync.isDeleted('cat:${c['id']}', (c['ts'] as int?) ?? 0)) c,
+        ]);
       } else if (!_box.containsKey(k)) {
         await _box.put(k, e.value);
       }

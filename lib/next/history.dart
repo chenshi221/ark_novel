@@ -1,6 +1,7 @@
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import 'incognito.dart';
+import 'sync.dart';
 
 class HistoryEntry {
   const HistoryEntry({required this.aid, required this.title, required this.img, required this.cid, required this.chapter, required this.time});
@@ -39,7 +40,14 @@ class ReadingHistory {
     ].take(300).toList());
   }
 
-  static Future<void> remove(String aid) => _box.put('history2', ((_box.get('history2') as List?) ?? const []).cast<Map>().where((e) => e['aid'] != aid).toList());
+  /// 删除、清空都记墓碑（`h:书`、`h:*`），不然同步时别的设备又把记录带回来。
+  static Future<void> remove(String aid) async {
+    await Sync.tombstone(['h:$aid']);
+    await _box.put('history2', ((_box.get('history2') as List?) ?? const []).cast<Map>().where((e) => e['aid'] != aid).toList());
+  }
 
-  static Future<void> clear() => _box.delete('history2');
+  static Future<void> clear() async {
+    await Sync.tombstone(['h:*']);
+    await _box.delete('history2');
+  }
 }
