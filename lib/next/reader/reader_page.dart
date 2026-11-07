@@ -1520,9 +1520,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                   XSwitch(title: '反色', value: prefs.invert, onChanged: (v) => set(prefs.copyWith(invert: v))),
                   const XDivider(),
                   const XGroupTitle('排版'),
-                  XSlider(title: '字号', label: '${prefs.fontSize.round()}', slider: Slider(min: 14, max: 32, divisions: 18, value: prefs.fontSize, onChanged: (v) => set(prefs.copyWith(fontSize: v)))),
-                  XSlider(title: '行距', label: prefs.lineHeight.toStringAsFixed(1), slider: Slider(min: 1.3, max: 2.4, divisions: 11, value: prefs.lineHeight, onChanged: (v) => set(prefs.copyWith(lineHeight: v)))),
-                  XSlider(title: '页边距', label: '${prefs.margin.round()}', slider: Slider(min: 8, max: 48, divisions: 20, value: prefs.margin, onChanged: (v) => set(prefs.copyWith(margin: v)))),
+                  _LayoutSlider(title: '字号', label: (v) => '${v.round()}', min: 14, max: 32, divisions: 18, value: prefs.fontSize, onCommit: (v) => set(prefs.copyWith(fontSize: v))),
+                  _LayoutSlider(title: '行距', label: (v) => v.toStringAsFixed(1), min: 1.3, max: 2.4, divisions: 11, value: prefs.lineHeight, onCommit: (v) => set(prefs.copyWith(lineHeight: v))),
+                  _LayoutSlider(title: '页边距', label: (v) => '${v.round()}', min: 8, max: 48, divisions: 20, value: prefs.margin, onCommit: (v) => set(prefs.copyWith(margin: v))),
                   XChips<int>(
                     title: '字体',
                     value: prefs.font,
@@ -1564,6 +1564,46 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
               ),
             ),
           );
+        },
+      ),
+    );
+  }
+}
+
+/// 字号、行距、页边距：拖动时只改数字，松手才生效。每改一档都要整章重新排版，拖动中每档都排一次会卡顿。
+class _LayoutSlider extends StatefulWidget {
+  const _LayoutSlider({required this.title, required this.label, required this.min, required this.max, required this.divisions, required this.value, required this.onCommit});
+
+  final String title;
+  final String Function(double value) label;
+  final double min;
+  final double max;
+  final int divisions;
+  final double value;
+  final ValueChanged<double> onCommit;
+
+  @override
+  State<_LayoutSlider> createState() => _LayoutSliderState();
+}
+
+class _LayoutSliderState extends State<_LayoutSlider> {
+  double? _dragging;
+
+  @override
+  Widget build(BuildContext context) {
+    final v = (_dragging ?? widget.value).clamp(widget.min, widget.max);
+    return XSlider(
+      title: widget.title,
+      label: widget.label(v),
+      slider: Slider(
+        min: widget.min,
+        max: widget.max,
+        divisions: widget.divisions,
+        value: v,
+        onChanged: (x) => setState(() => _dragging = x),
+        onChangeEnd: (x) {
+          setState(() => _dragging = null);
+          if (x != widget.value) widget.onCommit(x);
         },
       ),
     );
