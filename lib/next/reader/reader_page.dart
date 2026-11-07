@@ -308,7 +308,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
       final inv = ref.read(readerPrefsProvider).volumeInvert;
       // 长按：系统连发得很快，隔一段才翻一页，动画才放得完；菜单、弹窗开着时不连翻
       final now = DateTime.now();
-      if (call.arguments == true && (_bar || !(ModalRoute.of(context)?.isCurrent ?? true) || now.difference(_volTurn) < const Duration(milliseconds: 300))) return;
+      if (!mounted || !(ModalRoute.of(context)?.isCurrent ?? true)) return; // 设置面板、目录这类弹窗开着时不在下面翻页
+      if (call.arguments == true && (_bar || now.difference(_volTurn) < const Duration(milliseconds: 300))) return;
       _volTurn = now;
       // 菜单开着时按音量键先只收起菜单，再按才翻页
       if (_bar && (call.method == 'volumeUp' || call.method == 'volumeDown')) return _toggleBar();
