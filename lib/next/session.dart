@@ -443,8 +443,9 @@ class SessionController extends Notifier<SessionState> {
         await _client.dio.post('$previewProxyBase/__session/logout');
       } catch (_) {}
     }
-    // 书架这类账号私有的离线备份一并清掉，换账号不会看到上一个人的内容
-    if (s is SessionLoggedIn) await PageStore.removeScope(s.user.uid);
+    // 书架这类账号私有的离线备份一并清掉，换账号不会看到上一个人的内容（还在确认登录时按上次保存的账号）
+    final uid = s is SessionLoggedIn ? s.user.uid : _tryParseUser(_store.userHtml)?.uid;
+    if (uid != null && uid.isNotEmpty) await PageStore.removeScope(uid);
     await _clear();
     state = const SessionLoggedOut();
   }
