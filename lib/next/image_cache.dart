@@ -123,7 +123,10 @@ class ImageStore {
   Future<String> path(String rawUrl) async {
     final url = _norm(rawUrl);
     await load(url);
-    return p.join((await _cacheDir()).path, _name(url));
+    // 内存里有、磁盘上的文件却可能已经被清理掉了：补写一份，别给出不存在的路径
+    final file = File(p.join((await _cacheDir()).path, _name(url)));
+    if (!await file.exists()) await writeFileAtomic(file, await _load(url));
+    return file.path;
   }
 
   Future<void> _slot(String url) {
@@ -176,6 +179,7 @@ class ImageStore {
       } finally {
         _release();
       }
+      await file.parent.create(recursive: true); // 下载期间可能清空了缓存目录
       await writeFileAtomic(file, bytes);
     }
     _put(url, bytes);
