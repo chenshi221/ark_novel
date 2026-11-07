@@ -399,6 +399,17 @@ class Wenku8Parser {
     );
   }
 
+  /// 是否是要求登录的页面：跳到了登录页（有密码框），或者"出现错误！"提示页里说要先登录。
+  /// 用来区分"登录过期"和维护页、验证页这类偶发的意外页面。
+  static bool needsLogin(String html) {
+    final doc = parse(html);
+    if (doc.querySelector('input[name=password]') != null) return true;
+    final title = doc.getElementsByClassName('blocktitle').firstOrNull?.text;
+    if (title != '出现错误！' && title != '出現錯誤！') return false;
+    final message = doc.getElementsByClassName('blockcontent').firstOrNull?.text ?? '';
+    return ['登录', '登錄', '登入'].any(message.contains);
+  }
+
   /// 是否是 wenku8 的"出现错误！"提示页。
   static bool isErrorPage(String html) {
     final t = parse(html).getElementsByClassName('blocktitle').firstOrNull?.text;

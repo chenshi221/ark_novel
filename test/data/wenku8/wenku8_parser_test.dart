@@ -58,6 +58,15 @@ void main() {
     expect(() => Wenku8Parser.userInfo(fixture('error.html')), throwsA(isA<Wenku8UnexpectedPageException>()));
   });
 
+  test('要求登录的页面：登录表单、提示登录的错误页算，维护页、其他错误页不算', () {
+    expect(Wenku8Parser.needsLogin('<form action="login.php?do=submit"><input name="username"><input name="password" type="password"></form>'), true);
+    expect(Wenku8Parser.needsLogin('<div class="blocktitle">出现错误！</div><div class="blockcontent">对不起，您需要登录后才能访问本页！</div>'), true);
+    expect(Wenku8Parser.needsLogin('<div class="blocktitle">出現錯誤！</div><div class="blockcontent">請先登錄</div>'), true);
+    expect(Wenku8Parser.needsLogin(fixture('error.html')), false);
+    expect(Wenku8Parser.needsLogin('<html><body>网站维护中，请稍后访问</body></html>'), false);
+    expect(Wenku8Parser.needsLogin(fixture('user_info.html')), false);
+  });
+
   test('错误页识别', () {
     expect(Wenku8Parser.isErrorPage(fixture('error.html')), isTrue);
     expect(Wenku8Parser.isErrorPage(fixture('novel_list.html')), isFalse);
