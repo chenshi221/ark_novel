@@ -24,14 +24,33 @@ import org.json.JSONArray
 class ReadingWidget : HomeWidgetProvider() {
     private val covers = intArrayOf(R.id.widget_cover0, R.id.widget_cover1, R.id.widget_cover2, R.id.widget_cover3)
 
+    // 解码、裁切封面放到后台线程：onUpdate 在主线程上跑，图大、设备慢时会拖慢桌面，超过 10 秒还会 ANR
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray, widgetData: SharedPreferences) {
-        val books = try {
+        val pending = try {
+            goAsync()
+        } catch (e: Exception) {
+            null
+        }
+        Thread {
+            try {
+                render(context, appWidgetManager, appWidgetIds, widgetData)
+            } catch (e: Exception) {
+                // 数据格式不对（例如旧版本留下的）：这次不更新，不能让 App 进程崩溃
+            } finally {
+                pending?.finish()
+            }
+        }.start()
+    }
+
+    private fun render(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray, widgetData: SharedPreferences) {
+        val parsed = try {
             JSONArray(widgetData.getString("books", "[]"))
         } catch (e: Exception) {
             JSONArray()
         }
-        val bitmaps = (0 until minOf(books.length(), covers.size)).map { i ->
-            val b = books.getJSONObject(i)
+        // 格式不对的条目跳过
+        val books = (0 until parsed.length()).mapNotNull { parsed.optJSONObject(it) }.take(covers.size)
+        val bitmaps = books.map { b ->
             b.optString("cover").takeIf { it.isNotEmpty() }?.let { roundedCover(it, b.optJSONArray("crop")) }
         }
         val icon = widgetData.getString("icon", null)?.let { BitmapFactory.decodeFile(it) }
@@ -52,11 +71,13 @@ class ReadingWidget : HomeWidgetProvider() {
                     views.setViewVisibility(coverId, View.INVISIBLE)
                     return@forEachIndexed
                 }
-                val b = books.getJSONObject(i)
+                val b = books[i]
                 views.setViewVisibility(coverId, View.VISIBLE)
                 val bmp = bitmaps[i]
                 if (bmp != null) views.setImageViewBitmap(coverId, bmp) else views.setImageViewResource(coverId, R.mipmap.launcher_icon)
-                views.setOnClickPendingIntent(coverId, launch(context, "ark://reader/${b.getString("aid")}/${b.getString("cid")}"))
+                val aid = b.optString("aid")
+                val cid = b.optString("cid")
+                views.setOnClickPendingIntent(coverId, launch(context, if (aid.isEmpty() || cid.isEmpty()) "ark://shelf" else "ark://reader/$aid/$cid"))
             }
             appWidgetManager.updateAppWidget(id, views)
         }
@@ -112,6 +133,10 @@ class ReadingWidget : HomeWidgetProvider() {
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = BitmapShader(src, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP) }
             val r = src.width * 0.08f
             Canvas(out).drawRoundRect(RectF(0f, 0f, src.width.toFloat(), src.height.toFloat()), r, r, paint)
+            // 中间几张已经画进 out 了，马上释放（createBitmap 尺寸不变时会返回同一个对象，别重复释放）
+            if (src !== raw) src.recycle()
+            if (raw !== full) raw.recycle()
+            full.recycle()
             out
         }
     } catch (e: Exception) {
