@@ -170,17 +170,20 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
 
   bool _background = false;
 
-  /// 朗读中退到后台 / 锁屏也算在读，计时不停；朗读停下时若还在后台再停表。
+  /// 朗读中退到后台 / 锁屏也算在读，计时不停（暂停了不算）；朗读停下、暂停时若还在后台再停表。
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _background = state != AppLifecycleState.resumed;
     if (!_background) {
       _watch.start();
-    } else if (!_speaking) {
+    } else if (!_listening) {
       _flushStats();
       _watch.stop();
     }
   }
+
+  /// 正在听朗读（开着且没暂停）
+  bool get _listening => _speaking && !_paused;
 
   // ---- 当前章节与位置 ----
   late String _cid = widget.cid;
@@ -214,6 +217,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   String _ttsText = '';
   int _si = 0;
   DateTime _jumped = DateTime(0); // 手动跳句的时刻：刚被打断的那句的"读完"回调要忽略
+  bool _skipDone = false; // 跳句后还没忽略过被打断那句的"读完"回调（只忽略一次，新的短句很快读完时不会被一起吞掉）
+  DateTime _ttsSavedAt = DateTime(0); // 朗读时上次保存进度的时刻
   DateTime _spokeAt = DateTime(0); // 最近一句开始朗读的时刻：这之后马上发生的翻页是跟读造成的，不是用户翻的
   int _lastPageOffset = -1;
   Timer? _turnTimer;
@@ -293,7 +298,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     _tick();
     _clock = Timer.periodic(const Duration(minutes: 1), (_) {
       _tick();
-      if (!_background || _speaking) _flushStats();
+      if (!_background || _listening) _flushStats();
+      // 暂停时不会走到 _speakNext，定时关闭在这里检查
+      if (_speaking && _paused && _sleepAt != null && DateTime.now().isAfter(_sleepAt!)) _stopTts();
     });
     _initial = widget.offset;
     _doneAtOpen = Volumes.done(widget.aid).keys.toSet();
@@ -301,9 +308,20 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     WidgetsBinding.instance.addObserver(this);
     _applyChrome(ref.read(readerPrefsProvider));
     _tts.setCompletionHandler(() {
-      if (!mounted || !_speaking || _paused || DateTime.now().difference(_jumped).inMilliseconds < 400) return;
+      if (!mounted || !_speaking || _paused) return;
+      if (_skipDone && DateTime.now().difference(_jumped).inMilliseconds < 400) {
+        _skipDone = false;
+        return;
+      }
+      _skipDone = false;
       _si++;
       _speakNext();
+    });
+    // 引擎出错（没装中文语音、引擎被系统杀掉）时不会有"读完"回调：停下来，不然一直显示在朗读
+    _tts.setErrorHandler((message) {
+      if (!mounted || !_speaking) return;
+      _stopTts();
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text('朗读出错，已停止：$message')));
     });
   }
 
@@ -323,6 +341,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     _nav.page.dispose();
     _turnTimer?.cancel();
     _tts.setCompletionHandler(() {});
+    _tts.setErrorHandler((_) {});
     _tts.stop();
     _notice?.clearCallbacks();
     if (_speaking) _notice?.hide();
@@ -338,7 +357,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   Future<void> _startTts(Chapter c, {bool fromStart = false}) async {
     _ttsText = c.text;
     _segs = splitSentences(c.text);
-    if (_segs.isEmpty) return;
+    if (_segs.isEmpty) {
+      // 纯插图章、空章：自动续读时接着读下一章；手动点朗读时说明一下
+      if (fromStart && _speaking) {
+        _si = 0;
+        return _speakNext();
+      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('这一章没有可以朗读的文字')));
+      return;
+    }
     final at = fromStart ? 0 : _offset;
     _si = _segs.indexWhere((e) => e.$2 > at);
     if (_si < 0) _si = _segs.length - 1;
@@ -391,13 +418,20 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     if (!_speaking || _paused) return;
     _paused = true;
     _jumped = DateTime.now(); // 被打断的这句的"读完"回调不算
+    _skipDone = true;
     _tts.stop();
+    // 暂停不算在读：在后台的话先把时间记上、停表
+    if (_background) {
+      _flushStats();
+      _watch.stop();
+    }
     _showNotice();
   }
 
   void _resumeSpeech() {
     if (!_speaking || !_paused) return;
     _paused = false;
+    if (_background) _watch.start();
     _showNotice();
     _speakNext();
   }
@@ -411,12 +445,13 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   }
 
   Future<void> _speakNext() async {
-    if (!_speaking || _paused) return;
+    if (!mounted || !_speaking || _paused) return;
     if (_sleepAt != null && DateTime.now().isAfter(_sleepAt!)) return _stopTts();
     if (_si < _segs.length) {
       final (s, e) = _segs[_si];
       _spokeAt = DateTime.now();
-      if (mounted) setState(() {});
+      setState(() {});
+      _saveTtsProgress(s);
       await _tts.speak(_ttsText.substring(s, e).trim());
       return;
     }
@@ -429,6 +464,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     _segs = const [];
     _ttsText = '';
     _go(next.cid, keepTts: true);
+    _recordChapter(next.cid, next.title); // 熄屏时界面不重建，build 里记不到读过这章
     // 不等界面重建，直接取下一章接着读（熄屏时界面不重建）
     try {
       final c = await ref.read(chapterProvider((widget.aid, next.cid)).future);
@@ -438,11 +474,32 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     }
   }
 
+  /// 朗读到的位置隔几秒存一次进度：熄屏听书时正文不跟着翻页，进度只能在这里记，不然进程被杀后回到熄屏前的位置。
+  void _saveTtsProgress(int offset) {
+    final now = DateTime.now();
+    if (now.difference(_ttsSavedAt) < const Duration(seconds: 5)) return;
+    _ttsSavedAt = now;
+    ReadingProgress.save(widget.aid, _cid, offset);
+  }
+
+  /// 记下读到了这一章：阅读历史、章节统计（每章只记一次，正文显示时也走这里）。
+  void _recordChapter(String cid, String title) {
+    final novel = ref.read(novelProvider(widget.aid)).value;
+    if (_recorded == cid || novel == null) return;
+    _recorded = cid;
+    scheduleMicrotask(() {
+      ReadingHistory.record(widget.aid, novel.detail.title, novel.detail.imgUrl, cid, title);
+      ReadingStats.addChapter(widget.aid, cid);
+      ReadingStats.setMeta(widget.aid, novel.detail.title, novel.detail.author, novel.detail.imgUrl);
+    });
+  }
+
   /// 上一句 / 下一句。
   void _skipSentence(int delta) {
     if (!_speaking || _segs.isEmpty) return;
     _si = (_si + delta).clamp(0, _segs.length - 1);
     _jumped = DateTime.now();
+    _skipDone = true;
     _speakNext();
   }
 
@@ -658,6 +715,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     if (i < 0 || i == _si) return;
     _si = i;
     _jumped = DateTime.now();
+    _skipDone = true;
     _speakNext();
   }
 
@@ -891,14 +949,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                 _offset = _initial ?? (saved?.cid == _cid ? saved!.offset : _offset);
                 _initial = null;
               }
-              if (_recorded != _cid && novel != null) {
-                _recorded = _cid;
-                scheduleMicrotask(() {
-                  ReadingHistory.record(widget.aid, novel.detail.title, novel.detail.imgUrl, _cid, title);
-                  ReadingStats.addChapter(widget.aid, _cid);
-                  ReadingStats.setMeta(widget.aid, novel.detail.title, novel.detail.author, novel.detail.imgUrl);
-                });
-              }
+              _recordChapter(_cid, title);
               final reading = _speaking && prefs.ttsHighlight && _si < _segs.length && _ttsText == c.text ? _segs[_si] : null;
               InlineSpan spanOf(int from, int to) => buildSpan(c, from, to, style, noted, reading, Theme.of(context).colorScheme.primary);
               final heading = _headingAccent(context, prefs, palette);
