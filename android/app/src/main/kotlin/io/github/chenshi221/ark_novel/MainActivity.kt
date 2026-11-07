@@ -53,11 +53,16 @@ class MainActivity : AudioServiceFragmentActivity() {
         }
 
         // 封面超分辨率（见 Upscaler）：传进来原图字节，传回放大 4 倍的 JPEG
-        val upscaler = Upscaler(applicationContext)
+        // 进程里只有一个：Activity 每次重建都会走到这里，以前每次新建一个带线程的实例、从不释放
+        val upscaler = Upscaler.get(applicationContext)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "ark/upscale").setMethodCallHandler { call, result ->
-            val bytes = call.argument<ByteArray>("bytes")
-            if (call.method != "upscale" || bytes == null) {
+            if (call.method != "upscale") {
                 result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val bytes = call.argument<ByteArray>("bytes")
+            if (bytes == null) {
+                result.error("ARG_ERROR", "bytes is null", null)
                 return@setMethodCallHandler
             }
             upscaler.upscale(bytes) { out, err ->
