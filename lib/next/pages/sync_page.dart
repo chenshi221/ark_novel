@@ -29,12 +29,15 @@ class _SyncPageState extends ConsumerState<SyncPage> {
   String? _note;
   bool _busy = false;
   bool _showPass = false;
+  bool _passLoaded = false; // 安全存储里的密码读出来之前不能保存，否则会用空密码把它覆盖掉
 
   @override
   void initState() {
     super.initState();
     Sync.password().then((p) {
       if (mounted) _pass.text = p;
+    }).catchError((_) {}).whenComplete(() {
+      if (mounted) setState(() => _passLoaded = true);
     });
   }
 
@@ -91,7 +94,7 @@ class _SyncPageState extends ConsumerState<SyncPage> {
     final prefs = ref.read(appPrefsProvider.notifier);
     final scheme = Theme.of(context).colorScheme;
     final last = Sync.lastSync;
-    final busy = _busy || status.busy;
+    final busy = _busy || status.busy || !_passLoaded;
     final lastText = last > 0 ? '上次同步：${'${DateTime.fromMillisecondsSinceEpoch(last)}'.split('.').first.substring(0, 16)}' : '尚未同步';
     // 顶上一块状态卡：图标、是否已配置、上次同步时间；测试 / 同步的结果也显示在这里
     final message = _note ?? status.message;
