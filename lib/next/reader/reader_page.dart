@@ -84,11 +84,27 @@ final chapterProvider = FutureProvider.autoDispose.family<Chapter, (String, Stri
 
 /// 书签在本章第几屏：按现在的阅读设置（字号、行距、边距、字体、双页）重新排版算出来，所以改了设置页码也跟着对。
 /// 返回 (第几屏从 1 起, 共几屏)；滚动模式、没缓存过的章节返回 null（不为了算页码去联网）。
-Future<(int, int)?> bookmarkPage(WidgetRef ref, BuildContext context, String aid, String cid, String title, int offset) async {
+///
+/// 同样的书签和版面返回同一个 Future：书签列表在可拖动的弹窗里，拖动时每帧都重建，不能每帧都重新整章排版。
+Future<(int, int)?> bookmarkPage(WidgetRef ref, BuildContext context, String aid, String cid, String title, int offset) {
   final prefs = ref.read(readerPrefsProvider);
-  if (prefs.mode == 0 || ChapterCache.length(aid, cid) == null) return null;
+  if (prefs.mode == 0 || ChapterCache.length(aid, cid) == null) return Future.value();
   final size = MediaQuery.sizeOf(context);
   final view = MediaQuery.viewPaddingOf(context);
+  final key = (aid, cid, title, offset, prefs, size, view, PagedBody.lastLayout, ChapterCache.length(aid, cid));
+  final hit = _bookmarkPages.remove(key);
+  final future = hit ?? _bookmarkPage(ref, aid, cid, title, offset, prefs, size, view);
+  _bookmarkPages[key] = future;
+  if (_bookmarkPages.length > 100) _bookmarkPages.remove(_bookmarkPages.keys.first);
+  return future;
+}
+
+final _bookmarkPages = <Object, Future<(int, int)?>>{};
+
+/// 同一章、同样版面的分页结果（一章有好几个书签时只排一次版）
+final _bookmarkStarts = <Object, List<int>>{};
+
+Future<(int, int)?> _bookmarkPage(WidgetRef ref, String aid, String cid, String title, int offset, ReaderPrefs prefs, Size size, EdgeInsets view) async {
   final c = await ref.read(chapterProvider((aid, cid)).future);
   final f = FontStore.resolve(prefs.font);
   final style = readerStyle(prefs, const Color(0xFF000000), family: f.family, fallback: f.fallback);
@@ -96,7 +112,11 @@ Future<(int, int)?> bookmarkPage(WidgetRef ref, BuildContext context, String aid
   // 否则照 PagedBody 的算法：上下各留出标题 / 页脚的位置，宽屏开双页时一屏两页
   final fallbackCols = prefs.dual && size.width >= 900 ? 2 : 1;
   final (box, cols) = PagedBody.lastLayout ?? (Size(size.width / fallbackCols - prefs.margin * 2, size.height - view.top - view.bottom - 72), fallbackCols);
-  final starts = c.text.trim().isEmpty ? const <int>[] : paginate(c.text, style, box, strut: readerStrut(style), firstTop: headingHeight(title, style, box.width));
+  final startsKey = (aid, cid, title, c.text.length, c.text.hashCode, style, box);
+  final starts = c.text.trim().isEmpty
+      ? const <int>[]
+      : (_bookmarkStarts[startsKey] ??= paginate(c.text, style, box, strut: readerStrut(style), firstTop: headingHeight(title, style, box.width)));
+  if (_bookmarkStarts.length > 8) _bookmarkStarts.remove(_bookmarkStarts.keys.first);
   final total = starts.length + c.images.length;
   if (total == 0) return null;
   final page = offset > c.text.length ? math.min(starts.length + offset - c.text.length - 1, total - 1) : (starts.isEmpty ? 0 : pageOfOffset(starts, offset));
