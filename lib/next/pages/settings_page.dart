@@ -603,7 +603,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
         value: store.nativeNet,
         onChanged: (v) async {
           await store.setNativeNet(v);
-          setState(() {});
+          if (mounted) setState(() {});
         },
       ),
     ];

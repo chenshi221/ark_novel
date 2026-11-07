@@ -109,7 +109,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/novel/:aid', builder: (_, state) => NovelPageView(aid: state.pathParameters['aid']!)),
       GoRoute(path: '/novel/:aid/comments', builder: (_, state) => CommentsPage(aid: state.pathParameters['aid']!)),
       GoRoute(path: '/novel/:aid/comments/:rid', builder: (_, state) => RepliesPage(aid: state.pathParameters['aid']!, rid: state.pathParameters['rid']!)),
-      GoRoute(path: '/reader/:aid/:cid', builder: (_, state) => ReaderPage(aid: state.pathParameters['aid']!, cid: state.pathParameters['cid']!, offset: state.extra as int?)),
+      GoRoute(path: '/reader/:aid/:cid', builder: (_, state) => ReaderPage(aid: state.pathParameters['aid']!, cid: state.pathParameters['cid']!, offset: state.extra is int ? state.extra as int : null)),
       StatefulShellRoute.indexedStack(
         builder: (_, _, shell) => HomeShell(shell: shell),
         branches: [
