@@ -43,6 +43,9 @@ class LoginWebViewPage extends ConsumerStatefulWidget {
   ConsumerState<LoginWebViewPage> createState() => _LoginWebViewPageState();
 }
 
+/// [host] 是不是 [root] 这个站点（或它的子域名）。只比后缀的话 `evilwenku8.net` 也算，会把密码填进仿冒站。
+bool isSameSite(String host, String root) => host == root || host.endsWith('.$root');
+
 class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
   final _cookieManager = CookieManager.instance();
   late final String _host = Uri.parse(widget.url).host;
@@ -128,7 +131,7 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
   Future<void> _check(InAppWebViewController c, WebUri? uri) async {
     if (_done || uri == null) return;
     _log('加载完成 ${uri.host}${uri.path}');
-    if (!uri.host.endsWith(_root)) {
+    if (!isSameSite(uri.host, _root)) {
       if (mounted) setState(() => _status = '当前在其他域名 ${uri.host}，不会自动填表（登录页是 $_host）');
       return;
     }
