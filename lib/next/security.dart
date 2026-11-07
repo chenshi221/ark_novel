@@ -67,7 +67,8 @@ class _AppGuardState extends ConsumerState<AppGuard> with WidgetsBindingObserver
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!lockSupported || !AppPrefs.read(P.lock, false)) return;
+    // 系统的验证界面会让 App 暂停又恢复：验证期间的这些事件不算离开，不然刚解锁又锁上、反复弹验证
+    if (!lockSupported || !AppPrefs.read(P.lock, false) || _asking) return;
     if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
       _pausedAt ??= DateTime.now();
       if (!_locked && AppPrefs.read(P.lockAfter, 0) == 0) setState(() => _locked = true);
@@ -84,9 +85,23 @@ class _AppGuardState extends ConsumerState<AppGuard> with WidgetsBindingObserver
   Future<void> _unlock() async {
     if (_asking) return;
     _asking = true;
-    final ok = await authenticate('解锁 Ark Novel');
-    _asking = false;
+    final bool ok;
+    try {
+      // 开锁之后系统里关掉了锁屏密码：没法验证了，直接放行，不然再也进不了 App
+      ok = !await _canAuthenticate() || await authenticate('解锁 Ark Novel');
+    } finally {
+      _asking = false;
+      _pausedAt = null;
+    }
     if (ok && mounted) setState(() => _locked = false);
+  }
+
+  static Future<bool> _canAuthenticate() async {
+    try {
+      return await LocalAuthentication().isDeviceSupported();
+    } catch (_) {
+      return true; // 查不了就照常验证，验证失败还能再点
+    }
   }
 
   @override
