@@ -282,6 +282,8 @@ class DownloadState {
 /// 正文和插图都下载，断网后插图也能显示。
 class DownloadController extends Notifier<Map<String, DownloadState>> {
   final _cancelled = <String>{};
+  // 每本书第几次下载：删除缓存（[forget]）或重新开始后，旧的那次不再更新状态，不会把清掉的进度又加回来
+  final _runs = <String, int>{};
 
   @override
   Map<String, DownloadState> build() => {};
@@ -291,6 +293,7 @@ class DownloadController extends Notifier<Map<String, DownloadState>> {
   /// 删除缓存后把这本书的下载状态一起清掉（不重建整个 Notifier，免得打断别的书的下载）。
   void forget(String aid) {
     _cancelled.add(aid);
+    _runs[aid] = (_runs[aid] ?? 0) + 1;
     state = {...state}..remove(aid);
   }
 
@@ -301,8 +304,10 @@ class DownloadController extends Notifier<Map<String, DownloadState>> {
     final images = ref.read(imageStoreProvider);
     final all = total ?? chapters.length;
     _cancelled.remove(aid);
+    final run = _runs[aid] = (_runs[aid] ?? 0) + 1;
+    bool stale() => _runs[aid] != run;
     void emit({bool running = true, String? error}) {
-      if (!ref.mounted) return;
+      if (!ref.mounted || stale()) return;
       state = {...state, aid: DownloadState(done: ChapterCache.count(aid), total: all, running: running, error: error)};
     }
 
@@ -310,7 +315,7 @@ class DownloadController extends Notifier<Map<String, DownloadState>> {
     await ChapterCache.setMeta(aid, title, all, img, firstCid.isEmpty && chapters.isNotEmpty ? chapters.first.cid : firstCid);
     try {
       for (final c in chapters) {
-        if (_cancelled.contains(aid)) break;
+        if (_cancelled.contains(aid) || stale()) break;
         if (ChapterCache.has(aid, c.cid)) continue;
         final ticket = ChapterCache.ticket(aid, c.cid);
         final Content content;
