@@ -6,6 +6,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# 只读代码，不需要写权限
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -13,9 +17,10 @@ jobs:
     outputs:
       platforms: ${{ steps.platforms.outputs.platforms }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false # 后面的 pub get、Gradle 跑的是第三方代码，不把令牌留在 .git/config 里
 
       - name: Require a release commit for app changes
         if: github.event_name == 'pull_request'
@@ -49,7 +54,7 @@ jobs:
           fi
           echo "platforms=$platforms" | tee -a "$GITHUB_OUTPUT"
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: '3.47.4'
           channel: stable
@@ -80,17 +85,19 @@ jobs:
     timeout-minutes: 45
     # 保护规则要求这些任务都有结果，所以跳过步骤而不是跳过任务
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: contains(needs.check.outputs.platforms, matrix.platform)
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         if: matrix.platform == 'android' && contains(needs.check.outputs.platforms, matrix.platform)
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
 
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         if: contains(needs.check.outputs.platforms, matrix.platform)
         with:
           flutter-version: '3.47.4'
