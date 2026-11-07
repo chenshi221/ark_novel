@@ -206,16 +206,34 @@ class Sync {
         'palette': _box.get('palette'),
         'p': {for (final k in _keys('p.ui.')) k: _box.get(k)},
       },
-      'stats': {
-        'day': _box.get('stats:day') ?? const {},
-        'book': _box.get('stats:book') ?? const {},
-        'chapters': _box.get('stats:chapters') ?? 0,
-        'meta': _box.get('stats:meta') ?? const {},
-        'days': byAid('stats:days:'),
-        'ch': byAid('stats:ch:'),
-        'last': _box.get('stats:last') ?? const {},
-      },
+      'stats': _localStats(),
     };
+  }
+
+  static Map<String, dynamic> _localStats() => {
+    'day': _box.get('stats:day') ?? const {},
+    'book': _box.get('stats:book') ?? const {},
+    'chapters': _box.get('stats:chapters') ?? 0,
+    'meta': _box.get('stats:meta') ?? const {},
+    'days': {for (final k in _keys('stats:days:')) k.substring(11): _box.get(k)},
+    'ch': {for (final k in _keys('stats:ch:')) k.substring(9): _box.get(k)},
+    'last': _box.get('stats:last') ?? const {},
+  };
+
+  /// 从别的设备（[device]）的备份恢复后：恢复来的阅读统计是那台设备的，改记到它名下（和同步来的统计放一起）。
+  /// 那台设备还在用的话，下次同步它的快照会覆盖这份，不会重复计算；本机自己的统计从零开始累加。
+  static Future<void> adoptLocalStatsAs(String device) async {
+    final stats = _localStats();
+    await _box.put('sync:stats:$device', jsonEncode(stats));
+    await _box.deleteAll([
+      'stats:day',
+      'stats:book',
+      'stats:chapters',
+      'stats:meta',
+      'stats:last',
+      ..._keys('stats:days:'),
+      ..._keys('stats:ch:'),
+    ]);
   }
 
   // ---- 其他设备的快照 → 并入本机 ----

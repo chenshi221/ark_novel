@@ -109,6 +109,62 @@ void main() {
     }
   });
 
+  test('恢复到另一台设备：同步身份不跟着走，恢复来的统计记到原设备名下', () async {
+    final box = await Hive.openBox('session');
+    await box.putAll({
+      'sync:device': 'dA',
+      'sync:avatarUp': 5,
+      'sync:last': 9,
+      'stats:day': {'2026-10-21': 60},
+      'stats:book': {'1': 60},
+      'stats:chapters': 3,
+      'stats:ch:1': {'a': {'2026-10-21': 60}},
+      'stats:days:1': ['2026-10-21'],
+      'palette': 4,
+    });
+    await Backup.pack(zip, Backup.make(), support);
+    final input = InputFileStream(zip);
+    final json = utf8.decode(ZipDecoder().decodeStream(input).files.firstWhere((f) => f.name == 'data.json').content as List<int>);
+    await input.close();
+    final box3 = (jsonDecode(json) as Map)['box'] as Map;
+    expect(box3.containsKey('sync:device'), false);
+    expect(box3.containsKey('sync:avatarUp'), false);
+    expect(box3.containsKey('sync:last'), false);
+
+    // 另一台设备 dB
+    await box.clear();
+    await box.put('sync:device', 'dB');
+    await box.close();
+    await Backup.unpack(zip, support);
+    await Backup.apply(support);
+
+    final b = await Hive.openBox('session');
+    expect(b.get('sync:device'), 'dB');
+    expect(b.get('sync:avatarUp'), isNull);
+    expect(b.get('palette'), 4);
+    for (final k in ['stats:day', 'stats:book', 'stats:chapters', 'stats:ch:1', 'stats:days:1']) {
+      expect(b.containsKey(k), false, reason: k);
+    }
+    final moved = jsonDecode(b.get('sync:stats:dA') as String) as Map;
+    expect(moved['day'], {'2026-10-21': 60});
+    expect(moved['chapters'], 3);
+    expect(moved['ch'], {'1': {'a': {'2026-10-21': 60}}});
+    expect(moved['days'], {'1': ['2026-10-21']});
+  });
+
+  test('旧版备份把 sync:device 放在 box 里：恢复时也认得是哪台设备的', () async {
+    final box = await Hive.openBox('session');
+    await box.close();
+    await writeZip({'data.json': '{"backup":3,"box":{"sync:device":"dOld","stats:chapters":2,"palette":3}}'});
+    await Backup.unpack(zip, support);
+    await Backup.apply(support);
+    final b = await Hive.openBox('session');
+    expect(b.get('sync:device'), isNull); // 本机还没有，之后第一次用时新生成
+    expect(b.get('stats:chapters'), isNull);
+    expect((jsonDecode(b.get('sync:stats:dOld') as String) as Map)['chapters'], 2);
+    expect(b.get('palette'), 3);
+  });
+
   test('备份里的登录信息即使被手动加进去也不会写入', () async {
     final box = await Hive.openBox('session');
     await box.put('cookie', 'mine');
