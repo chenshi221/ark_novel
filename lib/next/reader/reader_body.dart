@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 
@@ -565,6 +566,7 @@ class _PullBookmarkState extends State<PullBookmark> with SingleTickerProviderSt
     Widget child = Transform.translate(offset: Offset(0, shown), child: widget.child);
     child = widget.drag
         ? GestureDetector(
+            supportedDevices: const {PointerDeviceKind.touch, PointerDeviceKind.trackpad, PointerDeviceKind.stylus, PointerDeviceKind.invertedStylus}, // 鼠标拖动留给选字，和翻页一样
             onVerticalDragUpdate: (d) => _update(_pull + d.delta.dy),
             onVerticalDragEnd: (_) => _release(),
             onVerticalDragCancel: _release,
