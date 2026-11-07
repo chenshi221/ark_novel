@@ -162,8 +162,9 @@ class Wenku8Parser {
     if (lastUpdate == null) {
       introduce = tempHeat; // 下架书籍的简介在这个位置
     } else if (tempHeat.length >= 19) {
-      heat = tempHeat.substring(5, 7);
-      trending = tempHeat.length >= 20 ? tempHeat.substring(18, 20) : tempHeat.substring(18, 19);
+      // 「作品热度：A级，当前热度上升指数为：B级」：按冒号后面取，SSS级这种多于一个字母的也完整
+      heat = RegExp(r'[热熱]度[：:]\s*([^，,\s]+)').firstMatch(tempHeat)?[1];
+      trending = RegExp(r'指[数數][^：:]*[：:]\s*([^，,\s]+)').firstMatch(tempHeat)?[1];
     }
 
     final tags = (tag.length >= 7 ? tag.substring(7) : tag).split(" ").where((t) => t.isNotEmpty).toList();
@@ -199,7 +200,8 @@ class Wenku8Parser {
     final imgs = e.getElementsByTagName("img");
     if (anchors.length < 2 || imgs.isEmpty) return null;
     final String url = anchors[0].attributes["href"] ?? "";
-    final String aid = url.contains("book/") ? url.substring(url.indexOf("book/") + 5, url.indexOf(".htm")) : "";
+    // 链接格式不对（没有 .htm、带参数）时只是这本没有书号，不能让整个首页推荐失败
+    final String aid = RegExp(r'book/(\d+)').firstMatch(url)?[1] ?? "";
     return NovelCover(anchors[1].text, ImageUrlHelper.normalize(imgs[0].attributes["src"] ?? ""), aid);
   }
 
@@ -311,7 +313,7 @@ class Wenku8Parser {
       if (tds.length < 2) continue;
       final Element? userLink = tds[0].querySelector("a");
       final String? href = userLink?.attributes["href"];
-      final String uid = (href != null && href.contains("uid=")) ? href.split("uid=")[1] : "";
+      final String uid = href == null ? "" : RegExp(r'uid=(\d+)').firstMatch(href)?[1] ?? "";
 
       final List<Element> divs = tds[1].querySelectorAll("div");
       String rawTime = "";
@@ -351,8 +353,11 @@ class Wenku8Parser {
   }
 
   /// 根据书号拼出官方封面图地址（书架页没有封面，只能按规则拼）。
-  static String coverUrl(String aid) =>
-      aid.length <= 3 ? 'https://img.wenku8.com/image/0/$aid/${aid}s.jpg' : 'https://img.wenku8.com/image/${aid[0]}/$aid/${aid}s.jpg';
+  /// 目录按书号除以 1000 分（4 位书号就是第一位）；没有书号返回空串。
+  static String coverUrl(String aid) {
+    final n = int.tryParse(aid);
+    return n == null ? '' : 'https://img.wenku8.com/image/${n ~/ 1000}/$aid/${aid}s.jpg';
+  }
 
   /// 投票后的提示文字。
   static String voteResult(String html) {
