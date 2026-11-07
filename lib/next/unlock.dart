@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
@@ -79,25 +82,36 @@ class UnlockService {
 
   Future<void> _import(String aid, Future<List<CatVolume>> Function() catalogue) async {
     final cat = await catalogue();
-    final txt = Wenku8Txt.decode(await _ref.read(txtDownloaderProvider).fetch(aid));
-    final texts = Wenku8Txt.byCatalogue(txt, cat);
+    final all = [for (final v in cat) ...v.chapters];
+    // 下载前就记下凭证：TXT 要下载一两分钟，这期间删掉了这本的缓存，下完就不再写回去
+    final tickets = {for (final c in all) c.cid: ChapterCache.ticket(aid, c.cid)};
+    final bookTicket = ChapterCache.ticket(aid, '').$1;
+    final bytes = await _ref.read(txtDownloaderProvider).fetch(aid);
+    // 整本几 MB：解码、按目录拆章放到后台做，不卡界面
+    final (texts, title) = await compute(_splitTxt, (bytes, cat));
     if (texts.isEmpty) throw const ChapterLockedException('全本 TXT 和网站目录对不上，取不到正文。');
+    if (ChapterCache.ticket(aid, '').$1 != bookTicket) return; // 下载期间整本缓存被删了
     for (final MapEntry(key: cid, value: text) in texts.entries) {
-      final ticket = ChapterCache.ticket(aid, cid);
+      final ticket = tickets[cid] ?? ChapterCache.ticket(aid, cid);
       final old = await ChapterCache.get(aid, cid);
       if (old == null || isLockedContent(old)) await ChapterCache.put(aid, cid, Content(text: text, images: const []), ticket: ticket);
     }
-    final all = [for (final v in cat) ...v.chapters];
     // 记成离线缓存：启动时的自动清理不会删，「离线缓存」里能看到、能删（无痕阅读时不记进离线缓存列表）
     if (!Incognito.on && !ChapterCache.offline(aid) && all.isNotEmpty) {
       final book = LibraryStore.get(aid);
       final seen = ReadingHistory.all().where((e) => e.aid == aid).firstOrNull; // 不在书架上就用阅读历史里的书名、封面
-      final title = (book?['title'] as String?) ?? seen?.title ?? RegExp(r'^<([^<>\n]+)>$', multiLine: true).firstMatch(txt)?[1] ?? aid;
+      final name = (book?['title'] as String?) ?? seen?.title ?? title ?? aid;
       final img = [book?['img'] as String?, seen?.img].whereType<String>().where((e) => e.isNotEmpty).firstOrNull ?? Wenku8Parser.coverUrl(aid);
-      await ChapterCache.setMeta(aid, title, all.length, img, all.first.cid);
+      await ChapterCache.setMeta(aid, name, all.length, img, all.first.cid);
     }
     await _box.put('unlock:txt:$aid', {'m': texts.keys.toList(), 'a': [for (final c in all) c.cid]});
   }
+}
+
+/// 在后台 isolate 里跑：解码全本 TXT、按网站目录拆成章节，顺带取出 TXT 开头的书名。
+(Map<String, String>, String?) _splitTxt((Uint8List, List<CatVolume>) args) {
+  final txt = Wenku8Txt.decode(args.$1);
+  return (Wenku8Txt.byCatalogue(txt, args.$2), RegExp(r'^<([^<>\n]+)>$', multiLine: true).firstMatch(txt)?[1]);
 }
 
 final appApiProvider = Provider<Wenku8AppApi>((ref) {
