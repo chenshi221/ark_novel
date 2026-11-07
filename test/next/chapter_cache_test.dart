@@ -87,4 +87,9 @@ void main() {
     // 删除之后新取的凭证照常能写
     expect(await ChapterCache.put('5', 'b', Content(text: 'b', images: []), ticket: ChapterCache.ticket('5', 'b')), isTrue);
   });
+
+  test('存坏了解压不了的章节当作没缓存，不会一直读失败', () async {
+    await Hive.lazyBox('chapters').put('5:x', {'z': [1, 2, 3], 'i': <String>[]});
+    expect(await ChapterCache.get('5', 'x'), isNull);
+  });
 }

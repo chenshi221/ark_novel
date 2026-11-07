@@ -73,9 +73,15 @@ class ChapterCache {
     await _index.put('migrated', true);
   }
 
+  /// 缓存的一章；没有、或者存坏了（解压不了）返回 null，当作没缓存重新取。
   static Future<Content?> get(String aid, String cid) async {
     final v = await _text.get('$aid:$cid');
-    return v is Map ? Content(text: _textOf(v), images: (v['i'] as List).cast<String>()) : null;
+    if (v is! Map) return null;
+    try {
+      return Content(text: _textOf(v), images: (v['i'] as List).cast<String>());
+    } on FormatException {
+      return null;
+    }
   }
 
   static String _textOf(Map v) => v['z'] is List ? utf8.decode(gzip.decode(v['z'] as List<int>)) : v['t'] as String;
