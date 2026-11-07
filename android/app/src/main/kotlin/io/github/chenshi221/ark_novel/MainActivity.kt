@@ -32,7 +32,7 @@ class MainActivity : AudioServiceFragmentActivity() {
         // 阅读器自定义亮度：value 在 0~1 之间设窗口亮度，负数交还给系统
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "ark/screen").setMethodCallHandler { call, result ->
             if (call.method == "setBrightness") {
-                val v = (call.argument<Double>("value") ?: -1.0).toFloat()
+                val v = call.argument<Number>("value")?.toFloat() ?: -1f // Dart 传整数时是 Integer，不能按 Double 取
                 val lp = window.attributes
                 lp.screenBrightness = if (v < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else v.coerceIn(0.01f, 1f)
                 window.attributes = lp
@@ -161,5 +161,11 @@ class MainActivity : AudioServiceFragmentActivity() {
             return true
         }
         return super.onKeyDown(keyCode, event)
+    }
+
+    // 按下时拦了，抬起也拦掉，系统不会再处理这次按键
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        if (readerVolumeKeyHandlingEnabled && (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)) return true
+        return super.onKeyUp(keyCode, event)
     }
 }
