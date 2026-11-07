@@ -33,7 +33,8 @@ final novelProvider = StreamProvider.autoDispose.family<NovelPage, String>((ref,
   try {
     final fresh = await api.novel(aid);
     final d = fresh.detail;
-    ref.read(libraryProvider.notifier).noteDetail(aid, title: d.title, img: d.imgUrl, status: d.status);
+    // 请求期间退出了详情页：这个 provider 已经销毁，不能再用 ref（书架那边的书名、封面等下次再记）
+    if (ref.mounted) ref.read(libraryProvider.notifier).noteDetail(aid, title: d.title, img: d.imgUrl, status: d.status);
     await Volumes.saveCatalogue(aid, fresh.catalogue);
     // 读过的书补记书名（离线时读的统计里没有书名，会显示成"书号"）
     if (ReadingStats.perBook().containsKey(aid)) await ReadingStats.setMeta(aid, d.title, d.author, d.imgUrl);
@@ -104,17 +105,17 @@ class _BodyState extends ConsumerState<_Body> {
 
   /// 本地书架：先改本地，网站那边由书架同步去推；没登录也能用。有分类时加入后让选分类。
   Future<void> _toggleShelf(bool inLib) async {
-    final lib = ref.read(libraryProvider.notifier);
     final d = data.detail;
-    if (inLib) return lib.remove([aid]);
+    if (inLib) return ref.read(libraryProvider.notifier).remove([aid]);
     final cats = ref.read(libraryProvider).cats;
     // 设置里选了"新书默认分类"就直接放进去，不再问
     final def = AppPrefs.read(P.defaultCat, 'ask');
     final List<String>? picked = def == 'ask' || (def.isNotEmpty && !cats.any((c) => c.id == def))
         ? (cats.isEmpty ? const <String>[] : await pickCategories(context, cats, const []))
         : (def.isEmpty ? const <String>[] : [def]);
-    if (picked == null) return;
-    await lib.add(aid, d.title, d.imgUrl, cats: picked);
+    // 选分类的时候可能刚同步完、书架 provider 被重建了：要在选完之后再取
+    if (picked == null || !mounted) return;
+    await ref.read(libraryProvider.notifier).add(aid, d.title, d.imgUrl, cats: picked);
   }
 
   /// 目录筛选后的章节（没筛选就是全部）
