@@ -29,6 +29,14 @@ android {
         versionName = flutter.versionName
     }
 
+    // 正式签名：android/key.properties（已在 android/.gitignore 里，不入库）写 storeFile（相对 android/ 目录）、storePassword、keyAlias、keyPassword 四项。
+    // 没有这个文件就照旧用 debug 签名，和以前装在手机上的包一致。
+    // 注意：换签名后不能覆盖安装，要先卸载（会清空 App 数据），已经装着 debug 签名包的手机不要随便加这个文件。
+    val releaseKeys = java.util.Properties().apply {
+        val f = rootProject.file("key.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+
     signingConfigs {
         getByName("debug") {
             val customKeystore = file("${System.getProperty("user.home")}/.android/hikari-debug.keystore")
@@ -36,13 +44,19 @@ android {
                 storeFile = customKeystore
             }
         }
+        if (!releaseKeys.isEmpty()) {
+            create("release") {
+                storeFile = rootProject.file(releaseKeys.getProperty("storeFile"))
+                storePassword = releaseKeys.getProperty("storePassword")
+                keyAlias = releaseKeys.getProperty("keyAlias")
+                keyPassword = releaseKeys.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (releaseKeys.isEmpty()) "debug" else "release")
         }
     }
 }
