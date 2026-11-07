@@ -883,13 +883,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
         ),
       ),
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose()); // 弹窗关掉的这一帧还在用
     if (result == null) return;
+    final text = controller.text;
     final rules = ReplaceRules.all();
     if (result == 'remove') {
       await ReplaceRules.save([for (final r in rules) if (r.id != rule.id) r]);
       await RuleNotes.set(widget.aid, rule.id, '');
     } else {
-      await RuleNotes.set(widget.aid, rule.id, controller.text);
+      await RuleNotes.set(widget.aid, rule.id, text);
       if (color != rule.color) await ReplaceRules.save([for (final r in rules) r.id == rule.id ? r.copyWith(color: color) : r]);
     }
     if (mounted) {
