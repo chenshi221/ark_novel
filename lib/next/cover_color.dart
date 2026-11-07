@@ -43,7 +43,8 @@ Color? savedCoverColor(String url) {
   return v == null ? null : Color(v);
 }
 
-final coverColorProvider = FutureProvider.family<Color, String>((ref, url) async {
+// autoDispose：书架、报告页没在显示的封面不常驻内存（算过的颜色存在本地，再用时 [savedCoverColor] 直接给）
+final coverColorProvider = FutureProvider.autoDispose.family<Color, String>((ref, url) async {
   final box = Hive.box('session');
   final saved = savedCoverColor(url);
   if (saved != null) return saved;

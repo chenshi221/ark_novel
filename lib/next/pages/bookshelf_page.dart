@@ -564,7 +564,8 @@ class _ResumeBar extends ConsumerWidget {
     builder: (context, box, _) {
       final h = ReadingHistory.all().firstOrNull;
       if (h == null || box.get('resumeClosed') == h.aid) return const SizedBox.shrink();
-      final card = RepaintBoundary(child: _bar(context, ref, box, h));
+      // 用 Consumer 包一层：_bar 里的 ref.watch 要在一次 build 里执行，换了书（封面变了）旧的订阅才会被清掉
+      final card = RepaintBoundary(child: Consumer(builder: (context, ref, _) => _bar(context, ref, box, h)));
       return ValueListenableBuilder<bool>(
         valueListenable: hidden,
         builder: (context, isHidden, _) => TweenAnimationBuilder<double>(
