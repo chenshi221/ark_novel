@@ -287,6 +287,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
       final old = _tc;
       _tc = TabController(length: ids.length, vsync: this, initialIndex: math.max(0, ids.indexOf(cur)));
       _ids = ids;
+      _measureRetries = 0; // 标签变了（比如新建了分类）要重新量下划线的位置
       _tc!.addListener(_scrollToTab);
       if (old != null) WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
       if (first) WidgetsBinding.instance.addPostFrameCallback((_) => mounted ? _scrollToTab() : null); // 标签栏滚到上次的标签
@@ -314,9 +315,13 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
     final query = ref.watch(shelfQueryProvider);
     final opts = ref.watch(shelfOptionsProvider);
     // 搜索时每个标签显示找到几本（和标签里列出来的一样，也算上筛选）
-    String label(LibCategory c) => query.isNotEmpty
-        ? '${c.name} ${_arrange(_booksIn(lib, c.id), shelfOptionsFor(opts, c.id), query, c.id).length}'
-        : (counts ? '${c.name} ${_booksIn(lib, c.id).length}' : c.name);
+    // 在动画外面算好：下面的 AnimatedBuilder 滑动时每帧都重建，每帧对每个标签筛选、排序一遍会掉帧
+    final labels = {
+      for (final c in tabs)
+        c.id: query.isNotEmpty
+            ? '${c.name} ${_arrange(_booksIn(lib, c.id), shelfOptionsFor(opts, c.id), query, c.id).length}'
+            : (counts ? '${c.name} ${_booksIn(lib, c.id).length}' : c.name),
+    };
     final theme = Theme.of(context);
     return PreferredSize(
       preferredSize: const Size.fromHeight(44),
@@ -367,7 +372,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
                           alignment: Alignment.center,
                           padding: const EdgeInsets.symmetric(horizontal: 14),
                           child: Text(
-                            label(c),
+                            labels[c.id]!,
                             style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color.lerp(theme.colorScheme.onSurfaceVariant, theme.colorScheme.primary, near)),
                           ),
                         ),
@@ -559,7 +564,8 @@ class _ResumeBar extends ConsumerWidget {
     builder: (context, box, _) {
       final h = ReadingHistory.all().firstOrNull;
       if (h == null || box.get('resumeClosed') == h.aid) return const SizedBox.shrink();
-      final card = RepaintBoundary(child: _bar(context, ref, box, h));
+      // 用 Consumer 包一层：_bar 里的 ref.watch 要在一次 build 里执行，换了书（封面变了）旧的订阅才会被清掉
+      final card = RepaintBoundary(child: Consumer(builder: (context, ref, _) => _bar(context, ref, box, h)));
       return ValueListenableBuilder<bool>(
         valueListenable: hidden,
         builder: (context, isHidden, _) => TweenAnimationBuilder<double>(

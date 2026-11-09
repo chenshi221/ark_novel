@@ -16,7 +16,7 @@ import kotlin.math.roundToInt
  * 一次只跑一张（后台单线程）。长边超过 [MAX_INPUT] 的先缩到这么大再放大：中间结果按输入像素数涨，大图会占几百 MB 内存。
  * 每次用完就关掉解释器，不让它一直占着内存。
  */
-class Upscaler(private val context: Context) {
+class Upscaler private constructor(private val context: Context) {
     private val worker = Executors.newSingleThreadExecutor()
 
     private val modelBuffer: ByteBuffer by lazy {
@@ -47,17 +47,21 @@ class Upscaler(private val context: Context) {
         }
     }
 
+    // 一张图要分配几十 MB（输出 4 倍大小的浮点缓冲、像素数组、Bitmap），用完的 Bitmap 马上 recycle，不等 GC
     private fun run(input: ByteArray): ByteArray {
         var bmp = BitmapFactory.decodeByteArray(input, 0, input.size) ?: throw IllegalArgumentException("图片解码失败")
         val long = max(bmp.width, bmp.height)
         if (long > MAX_INPUT) {
             val s = MAX_INPUT.toFloat() / long
-            bmp = Bitmap.createScaledBitmap(bmp, (bmp.width * s).roundToInt(), (bmp.height * s).roundToInt(), true)
+            val scaled = Bitmap.createScaledBitmap(bmp, (bmp.width * s).roundToInt(), (bmp.height * s).roundToInt(), true)
+            if (scaled !== bmp) bmp.recycle()
+            bmp = scaled
         }
         val w = bmp.width
         val h = bmp.height
         val px = IntArray(w * h)
         bmp.getPixels(px, 0, w, 0, 0, w, h)
+        bmp.recycle()
         val inBuf = ByteBuffer.allocateDirect(w * h * 3 * 4).order(ByteOrder.nativeOrder())
         for (p in px) {
             inBuf.putFloat(((p shr 16) and 0xff) / 255f)
@@ -80,14 +84,25 @@ class Upscaler(private val context: Context) {
             out[i] = (0xff shl 24) or (c(outBuf.float) shl 16) or (c(outBuf.float) shl 8) or c(outBuf.float)
         }
         val result = Bitmap.createBitmap(out, ow, oh, Bitmap.Config.ARGB_8888)
-        return ByteArrayOutputStream().use {
-            result.compress(Bitmap.CompressFormat.JPEG, 92, it)
-            it.toByteArray()
+        try {
+            return ByteArrayOutputStream().use {
+                result.compress(Bitmap.CompressFormat.JPEG, 92, it)
+                it.toByteArray()
+            }
+        } finally {
+            result.recycle()
         }
     }
 
     companion object {
         const val SCALE = 4
         const val MAX_INPUT = 600
+
+        @Volatile
+        private var instance: Upscaler? = null
+
+        fun get(context: Context): Upscaler = instance ?: synchronized(this) {
+            instance ?: Upscaler(context.applicationContext).also { instance = it }
+        }
     }
 }
