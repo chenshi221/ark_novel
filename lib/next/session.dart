@@ -270,6 +270,7 @@ bool isCloudflare(Object e) => e is Cloudflare403Exception || e is CloudflareCha
 /// 登录状态。没登录也能进主界面（游客），需要账号的页面再提示登录。
 class SessionController extends Notifier<SessionState> {
   int _restoreEpoch = 0;
+  int _cookieSwaps = 0;
 
   static UserInfo? _tryParseUser(String? html) {
     if (html == null) return null;
@@ -352,17 +353,19 @@ class SessionController extends Notifier<SessionState> {
     // 刚启动时 build 已经按上次的账号信息进了主界面，别再切回"检查中"；
     // 验证完重新确认（afterVerify）仍走"检查中"，确认后主界面才会重新同步书架
     if (!(startup && state is SessionLoggedIn)) state = const SessionChecking();
+    final swaps = _cookieSwaps;
     try {
       final user = await _fetchUser().timeout(const Duration(seconds: 6));
       if (epoch != _restoreEpoch) return;
       state = SessionLoggedIn(user);
-    } on Wenku8UnexpectedPageException {
-      // 只有确认是要求登录的页面才到这里（见 [_fetchUser]），维护页之类按离线处理
-      if (epoch != _restoreEpoch) return;
-      await _clear();
-      state = const SessionLoggedOut(message: '登录已过期，请重新登录');
     } catch (e) {
       if (epoch != _restoreEpoch) return;
+      // 只有确认是要求登录的页面才清登录（见 [_fetchUser]）；途中换过 cookie 时请求可能没带登录 cookie，这个结论不可信
+      if (e is Wenku8UnexpectedPageException && swaps == _cookieSwaps) {
+        await _clear();
+        state = const SessionLoggedOut(message: '登录已过期，请重新登录');
+        return;
+      }
       // 联网失败不等于没登录：有 cookie 和上次保存的账号信息就按离线登录处理
       final cached = _tryParseUser(_store.userHtml);
       final verify = isCloudflare(e);
@@ -372,8 +375,8 @@ class SessionController extends Notifier<SessionState> {
 
   /// 过完 Cloudflare 验证（或登录）后，WebView 里的 cookie 分流：登录 cookie 全站点通用，其余只属于验证过的站点。
   Future<void> acceptWebCookies(String cookies, {String? userAgent, bool login = true}) async {
-    // 下面要先清空 cookie 再放回去：这段时间里还没回来的确认请求可能不带登录 cookie，结果作废，别据此清掉登录
-    ++_restoreEpoch;
+    // 下面要先清空 cookie 再放回去，这段时间里的确认请求可能不带登录 cookie。不能作废确认：这里可能正由确认请求的网页兜底调用
+    ++_cookieSwaps;
     final pairs = cookies.split(';').map((e) => e.trim()).where((e) => e.contains('='));
     final jieqi = pairs.where((e) => e.startsWith('jieqi')).join(';');
     final cf = pairs.where((e) => !e.startsWith('jieqi')).join(';');
@@ -387,6 +390,7 @@ class SessionController extends Notifier<SessionState> {
     }
     await _client.clearCookie();
     await _restoreCookies();
+    ++_cookieSwaps;
   }
 
   /// 原生 App：在内嵌网页里登录后拿到的 cookie。
