@@ -1,0 +1,9 @@
+# 工作流里的 action 固定在提交 SHA 上（防止 tag 被改指向）；有新版本时由 Dependabot 开 PR 更新
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
