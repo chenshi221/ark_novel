@@ -63,6 +63,61 @@ void main() {
     expect(find.textContaining('2/'), findsOneWidget);
   });
 
+  Widget body(Chapter c, int start, List<int> offsets) {
+    const style = TextStyle(fontSize: 18, height: 1.8);
+    return MaterialApp(
+      home: PagedBody(
+        chapter: c,
+        spanOf: (a, b) => TextSpan(text: c.text.substring(a, b), style: style),
+        style: style,
+        margin: 20,
+        title: '标题',
+        curl: false,
+        dual: false,
+        background: Colors.white,
+        color: Colors.black,
+        startOffset: start,
+        onOffset: offsets.add,
+        onEnd: () {},
+        onPrev: null,
+        onNext: null,
+        wrap: (w) => w,
+        onTapZone: () {},
+        onMark: (_) {},
+        hasSelection: () => false,
+        nav: ReaderNav(),
+      ),
+    );
+  }
+
+  testWidgets('版面变了（转屏、改窗口）按原来的位置重新分页：来回改不会往前漂，也不改进度', (t) async {
+    addTearDown(t.view.reset);
+    t.view.devicePixelRatio = 1;
+    final text = List.generate(400, (i) => '　　这是第$i段，用来凑够很多页的正文内容。').join('\n');
+    final c = Chapter(text: text, images: const [], marks: const []);
+    final start = text.indexOf('这是第200段');
+    final offsets = <int>[];
+    for (final width in [600.0, 700.0, 600.0, 700.0, 600.0, 700.0]) {
+      t.view.physicalSize = Size(width, 800);
+      await t.pumpWidget(body(c, start, offsets));
+      await t.pumpAndSettle();
+      expect(find.textContaining('这是第200段', findRichText: true), findsWidgets, reason: '宽 $width');
+    }
+    expect(offsets, isEmpty);
+  });
+
+  testWidgets('往回翻进来落在最后一页：报出那一页的实际位置', (t) async {
+    addTearDown(t.view.reset);
+    t.view.devicePixelRatio = 1;
+    t.view.physicalSize = const Size(600, 800);
+    final text = List.generate(400, (i) => '　　这是第$i段，用来凑够很多页的正文内容。').join('\n');
+    final offsets = <int>[];
+    await t.pumpWidget(body(Chapter(text: text, images: const [], marks: const []), kToEnd, offsets));
+    await t.pumpAndSettle();
+    expect(offsets, hasLength(1));
+    expect(offsets.single, inExclusiveRange(text.length ~/ 2, text.length));
+  });
+
   testWidgets('窄屏或关闭双页时仍是单页', (t) async {
     await pump(t, width: 600, dual: true, nav: ReaderNav(), offsets: []);
     expect(find.textContaining('2/'), findsNothing);

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 
@@ -565,6 +566,7 @@ class _PullBookmarkState extends State<PullBookmark> with SingleTickerProviderSt
     Widget child = Transform.translate(offset: Offset(0, shown), child: widget.child);
     child = widget.drag
         ? GestureDetector(
+            supportedDevices: const {PointerDeviceKind.touch, PointerDeviceKind.trackpad, PointerDeviceKind.stylus, PointerDeviceKind.invertedStylus}, // 鼠标拖动留给选字，和翻页一样
             onVerticalDragUpdate: (d) => _update(_pull + d.delta.dy),
             onVerticalDragEnd: (_) => _release(),
             onVerticalDragCancel: _release,
@@ -733,7 +735,10 @@ class _PagedBodyState extends State<PagedBody> {
   List<int> _starts = const [0];
   Object? _sig;
   int _page = 0;
-  int _cur = 0; // 当前读到的字符偏移，重新分页时按它定位
+  int _cur = 0; // 当前页开头的字符偏移
+  // 重新分页时按它定位：打开时的位置，之后是用户翻到的页的开头。重新分页只会落到包含它的那页，
+  // 不改它，所以来回改字号、转屏不会每次往前吸附一点、越漂越远
+  int _anchor = 0;
   double _overscroll = 0;
   double? _dragFrom; // 这次拖动开始时在第几页，翻页手感按它算（见 SwipePagePhysics）
   int _cols = 1; // 一屏几页（1 或 2）；_page、翻页动画的"页"都以一屏为单位
@@ -748,6 +753,7 @@ class _PagedBodyState extends State<PagedBody> {
   void initState() {
     super.initState();
     _cur = widget.startOffset;
+    _anchor = widget.startOffset;
     widget.nav
       ?..next = (() => _step(1))
       ..prev = (() => _step(-1))
@@ -891,6 +897,7 @@ class _PagedBodyState extends State<PagedBody> {
     _page = page;
     _publish();
     _cur = _offsetOf(page);
+    _anchor = _cur;
     widget.onOffset(_cur);
     if (page >= _units - 1) widget.onEnd();
     _prefetch();
@@ -1011,6 +1018,13 @@ class _PagedBodyState extends State<PagedBody> {
     return true;
   }
 
+  /// 换一个新的 PageController。旧的还挂在这一帧要卸载的 PageView 上，等这帧画完再释放。
+  void _dropController() {
+    final old = _controller;
+    _controller = null;
+    if (old != null) WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+  }
+
   void _step(int delta) => widget.curl ? (delta > 0 ? _curl.next() : _curl.prev()) : _slide(delta);
 
   void _slide(int delta) {
@@ -1036,7 +1050,7 @@ class _PagedBodyState extends State<PagedBody> {
         // 同样的版面（大小、样式、正文）不重复分页；开关菜单栏、拖滑块这类重建不会触发全文排版
         final sig = Object.hash(size, cols, widget.style, _c.text.length, _c.text.hashCode, widget.title, widget.volumeCover != null);
         if (sig != _sig) {
-          final keep = _sig == null ? widget.startOffset : _cur;
+          final keep = _anchor;
           _sig = sig;
           _cols = cols;
           _width = size.width;
@@ -1044,16 +1058,19 @@ class _PagedBodyState extends State<PagedBody> {
           _starts = _hasText ? _paged(_c, widget.title, size, _head) : const [0];
           _meCache = null;
           _peekLayout.clear();
-          _controller?.dispose();
-          _controller = null;
+          _dropController();
           _page = _pageOf(keep);
           _cur = _offsetOf(_page);
+          // 往回翻进来（落在最后一页）：把实际那页的位置报给阅读页，之后按这页定位。
+          // 其他情况不报：进度留着原来的位置（页中间也行），换了版面还能回到同一处
+          final report = keep >= kToEnd;
+          if (report) _anchor = _cur;
           _keys.clear();
           _publish();
           _imgBox = Size(box.maxWidth / cols, box.maxHeight);
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
-            if (_cur != widget.startOffset) widget.onOffset(_cur);
+            if (report && _cur != widget.startOffset) widget.onOffset(_cur);
             // 往回翻落在上一章最后一页不算读完
             if (_page >= _units - 1 && widget.startOffset < kToEnd && !widget.arrivedBack) widget.onEnd();
             _prefetch();
@@ -1089,8 +1106,7 @@ class _PagedBodyState extends State<PagedBody> {
           final base = _canTurnPrev ? 1 : 0;
           if (base != _base) {
             _base = base;
-            _controller?.dispose();
-            _controller = null;
+            _dropController();
           }
           _controller ??= PageController(initialPage: _page + _base);
           pages = NotificationListener<ScrollNotification>(
