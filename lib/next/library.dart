@@ -163,8 +163,9 @@ class LibraryState {
 
 /// 本地书架：加入 / 移出先改本地，再排队推到网站；[sync] 拉网站书架对一遍。分类只在本地。
 class LibraryController extends Notifier<LibraryState> {
-  bool _syncing = false;
-  String? _flushingAid;
+  // 同步合并完会重建这个 provider：放在实例上的话，新实例不知道旧实例还在推送，会同时推一遍
+  static bool _syncing = false;
+  static String? _flushingAid;
 
   @override
   LibraryState build() => LibraryState(
@@ -180,15 +181,21 @@ class LibraryController extends Notifier<LibraryState> {
 
   Map<String, Map> _ops() => ((_box.get('lib:ops') as Map?) ?? const {}).map((k, v) => MapEntry(k as String, Map.from(v as Map)));
 
-  Future<void> _queue(String aid, Map op) async {
-    final ops = _ops();
-    // 加了又移（或反过来）且还没推到网站：两个操作抵消（正在推送中的那条不能抵消）
+  /// 把一个操作并进 [ops]：加了又移（或反过来）且还没推到网站，两个操作抵消（正在推送中的那条不能抵消）。
+  /// 移出又加回时返回原来的 bid（书还用它），否则返回 null。
+  String? _enqueue(Map<String, Map> ops, String aid, Map op) {
     final prev = ops.remove(aid);
     if (_flushingAid == aid || prev == null || prev['op'] == op['op']) {
       ops[aid] = op;
-    } else if (prev['op'] == 'remove' && op['op'] == 'add' && prev['bid'] != null && state.books[aid] != null) {
-      await _save({...state.books, aid: state.books[aid]!.copyWith(bid: prev['bid'] as String?)});
+      return null;
     }
+    return prev['op'] == 'remove' && op['op'] == 'add' ? prev['bid'] as String? : null;
+  }
+
+  Future<void> _queue(String aid, Map op) async {
+    final ops = _ops();
+    final bid = _enqueue(ops, aid, op);
+    if (bid != null && state.books[aid] != null) await _save({...state.books, aid: state.books[aid]!.copyWith(bid: bid)});
     await _box.put('lib:ops', ops);
   }
 
@@ -203,13 +210,15 @@ class LibraryController extends Notifier<LibraryState> {
   Future<void> remove(Iterable<String> aids) async {
     final books = {...state.books};
     final removed = <String>[];
+    final ops = _ops();
     for (final aid in aids) {
       final b = books.remove(aid);
       if (b != null) {
         removed.add('lib:$aid');
-        await _queue(aid, {'op': 'remove', 'bid': b.bid});
+        _enqueue(ops, aid, {'op': 'remove', 'bid': b.bid});
       }
     }
+    await _box.put('lib:ops', ops); // 一次写完，不按本数一本本重写整份排队
     await Sync.tombstone(removed);
     await _save(books);
     unawaited(_push());
@@ -344,6 +353,8 @@ class LibraryController extends Notifier<LibraryState> {
         }
       }
       await _flush(api, remote);
+      // 拉书架这几秒里 WebDAV 同步可能已经合并完、重建了书架：这个实例的 state 已经过时，交给新实例下次再对
+      if (!ref.mounted) return null;
       final first = _box.get('lib:imported') != s.user.uid;
       var cats = state.cats;
       if (first) {

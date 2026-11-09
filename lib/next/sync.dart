@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show ValueNotifier, kIsWeb;
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
@@ -17,6 +18,7 @@ import 'library.dart';
 import 'progress.dart';
 import 'settings.dart';
 import 'stats.dart';
+import 'theme.dart';
 import 'updates.dart';
 import 'volumes.dart';
 
@@ -89,7 +91,15 @@ class Sync {
 
   static const _tombDays = 90;
 
+  static int get _tombCutoff => DateTime.now().millisecondsSinceEpoch - const Duration(days: _tombDays).inMilliseconds;
+
   static Map<String, int> _tombs() => Map<String, int>.from((_box.get('sync:tomb') as Map?) ?? const {});
+
+  /// [time] 时的 [key] 是否已被删除（有不早于它的墓碑）。
+  static bool isDeleted(String key, int time) {
+    final t = _tombs()[key];
+    return t != null && t >= time;
+  }
 
   /// 记下被删掉的东西（`b:书:章:偏移`、`r:规则编号`），同步时告诉其他设备也删掉。
   static Future<void> tombstone(Iterable<String> keys) async {
@@ -206,16 +216,34 @@ class Sync {
         'palette': _box.get('palette'),
         'p': {for (final k in _keys('p.ui.')) k: _box.get(k)},
       },
-      'stats': {
-        'day': _box.get('stats:day') ?? const {},
-        'book': _box.get('stats:book') ?? const {},
-        'chapters': _box.get('stats:chapters') ?? 0,
-        'meta': _box.get('stats:meta') ?? const {},
-        'days': byAid('stats:days:'),
-        'ch': byAid('stats:ch:'),
-        'last': _box.get('stats:last') ?? const {},
-      },
+      'stats': _localStats(),
     };
+  }
+
+  static Map<String, dynamic> _localStats() => {
+    'day': _box.get('stats:day') ?? const {},
+    'book': _box.get('stats:book') ?? const {},
+    'chapters': _box.get('stats:chapters') ?? 0,
+    'meta': _box.get('stats:meta') ?? const {},
+    'days': {for (final k in _keys('stats:days:')) k.substring(11): _box.get(k)},
+    'ch': {for (final k in _keys('stats:ch:')) k.substring(9): _box.get(k)},
+    'last': _box.get('stats:last') ?? const {},
+  };
+
+  /// 从别的设备（[device]）的备份恢复后：恢复来的阅读统计是那台设备的，改记到它名下（和同步来的统计放一起）。
+  /// 那台设备还在用的话，下次同步它的快照会覆盖这份，不会重复计算；本机自己的统计从零开始累加。
+  static Future<void> adoptLocalStatsAs(String device) async {
+    final stats = _localStats();
+    await _box.put('sync:stats:$device', jsonEncode(stats));
+    await _box.deleteAll([
+      'stats:day',
+      'stats:book',
+      'stats:chapters',
+      'stats:meta',
+      'stats:last',
+      ..._keys('stats:days:'),
+      ..._keys('stats:ch:'),
+    ]);
   }
 
   // ---- 其他设备的快照 → 并入本机 ----
@@ -223,32 +251,43 @@ class Sync {
   static List<Map> _maps(Object? v) => [for (final e in (v as List?) ?? const []) Map<String, dynamic>.from(e as Map)];
 
   /// 把 [remote]（别的设备的快照，已解码的 JSON）按规则并入本机。
+  ///
+  /// 超过 90 天没更新的快照抛 [StaleSnapshotException]：那之前的墓碑已经清掉了，并进来会把删过的东西加回来。
   static Future<void> merge(Map<String, dynamic> remote) async {
     if (remote['device'] == deviceId) return;
-    final puts = <String, Object?>{};
+    if (remote['at'] case final num at when at < _tombCutoff) throw const StaleSnapshotException();
+    // 要读写文件的头像先做完：从下面读本机数据到最后一起写入之间不能有 await，
+    // 否则这段时间里本机的改动（阅读器记历史、加书签）会被这里读到的旧值盖掉
+    final avatar = await _mergeAvatar(remote);
+    final puts = <String, Object?>{...avatar.puts};
+    final dels = <String>{...avatar.dels};
 
     // 墓碑：取较新的删除时间，超过 90 天的丢掉；比删除时间旧的东西视为已删
     final tomb = _tombs();
     for (final e in ((remote['tomb'] as Map?) ?? const {}).entries) {
-      if ((e.value as int) > (tomb[e.key] ?? 0)) tomb['${e.key}'] = e.value as int;
+      if (e.value is int && (e.value as int) > (tomb[e.key] ?? 0)) tomb['${e.key}'] = e.value as int;
     }
-    final cutoff = DateTime.now().millisecondsSinceEpoch - const Duration(days: _tombDays).inMilliseconds;
+    final cutoff = _tombCutoff;
     tomb.removeWhere((_, t) => t < cutoff);
     puts['sync:tomb'] = tomb;
     bool dead(String key, int time) => tomb.containsKey(key) && tomb[key]! >= time;
 
-    // 进度
+    // 进度：[章, 偏移, 时间]，旧版本机数据可能只有前两项（当作时间 0）；对方格式不对的单条跳过
     for (final e in ((remote['progress'] as Map?) ?? const {}).entries) {
-      final r = e.value as List;
-      final l = _box.get('progress:${e.key}') as List?;
-      if (l == null || (r[2] as int) > (l[2] as int)) puts['progress:${e.key}'] = r;
+      final r = e.value;
+      if (r is! List || r.length < 3 || r[0] is! String || r[1] is! int || r[2] is! int) continue;
+      final l = _box.get('progress:${e.key}');
+      final lTime = l is List && l.length >= 3 && l[2] is int ? l[2] as int : 0;
+      if ((r[2] as int) > lTime) puts['progress:${e.key}'] = r;
     }
 
-    // 历史：每本书取较新的
+    // 历史：每本书取较新的；删除、清空过的（`h:书`、`h:*` 墓碑）不再带回来
     final hist = <String, Map>{};
     for (final h in [..._maps(_box.get('history2')), ..._maps(remote['history'])]) {
+      final time = h['time'] as int;
+      if (dead('h:${h['aid']}', time) || dead('h:*', time)) continue;
       final old = hist[h['aid']];
-      if (old == null || (h['time'] as int) > (old['time'] as int)) hist[h['aid'] as String] = h;
+      if (old == null || time > (old['time'] as int)) hist[h['aid'] as String] = h;
     }
     puts['history2'] = (hist.values.toList()..sort((a, b) => (b['time'] as int).compareTo(a['time'] as int))).take(300).toList();
 
@@ -406,7 +445,7 @@ class Sync {
         }
       }
       if (gone.isNotEmpty) puts['lib:ops'] = ops;
-      await _renameCatRefs(localCatMap, puts);
+      _renameCatRefs(localCatMap, puts, dels);
     }
 
     if (remote['shelfTabOrder'] is List && _box.get('shelfTabOrder') == null) {
@@ -423,8 +462,10 @@ class Sync {
     // 分卷目录与卷封面（含手动挑过 / 裁剪过的 #crop= 封面，手动挑的优先于自动挑的）
     for (final e in ((remote['vols'] as Map?) ?? const {}).entries) {
       final l = _box.get('vols:${e.key}') as List?;
-      final r = e.value as List?;
-      if (r != null && (l == null || r.length > l.length)) puts['vols:${e.key}'] = r;
+      final r = e.value;
+      // 格式不对的整本跳过，免得写进本机后 [Volumes.of] 每次读都出错
+      if (r is! List || !r.every(_isVol)) continue;
+      if (l == null || r.length > l.length) puts['vols:${e.key}'] = r;
     }
     var coverChanged = false;
     final rVcover = (remote['vcover'] as Map?) ?? const {};
@@ -495,49 +536,15 @@ class Sync {
       }
     }
 
-    // 可选同步项：按本机的开关决定是否并入
-    if (!kIsWeb && AppPrefs.read(P.syncAvatar, true) && remote['avatar'] is Map) {
-      final ra = remote['avatar'] as Map;
-      final rTs = (ra['ts'] as int?) ?? 0;
-      final lTs = (_box.get('avatar:ts') as int?) ?? 0;
-      if (rTs > lTs) {
-        final data = ra['data'] as String?;
-        if (data == null && ra['file'] != null) {
-          // 导入的备份文件不带图片，保持原样
-        } else if (data != null && data.isNotEmpty) {
-          try {
-            final bytes = base64Decode(data);
-            final ext = p.extension('a${(ra['ext'] as String?) ?? '.png'}'); // 来自外部，只取扩展名
-            Directory dir;
-            try {
-              dir = Directory(p.join((await getApplicationSupportDirectory()).path, 'avatar'));
-            } catch (_) {
-              dir = Directory(p.join(Directory.systemTemp.path, 'ark_avatar'));
-            }
-            if (await dir.exists()) await dir.delete(recursive: true);
-            await dir.create(recursive: true);
-            final dest = File(p.join(dir.path, 'avatar_$rTs$ext'));
-            await writeFileAtomic(dest, bytes);
-            puts['avatar'] = dest.path;
-            puts['avatar:ts'] = rTs;
-          } catch (_) {}
-        } else {
-          await _box.delete('avatar');
-          puts['avatar:ts'] = rTs;
-        }
-      }
-    }
-
+    // 可选同步项：按本机的开关决定是否并入。键名只认这一组自己的前缀、值的类型和本机一致，
+    // 别人发来的文件改不了同步地址、登录信息这类键
     if (AppPrefs.read(P.syncShelfPrefs, false) && remote['shelfPrefs'] is Map) {
       final sp = remote['shelfPrefs'] as Map;
       final rTs = (sp['ts'] as int?) ?? 0;
       final lTs = (_box.get('sync:prefsTs') as int?) ?? 0;
       if (rTs > lTs) {
         if (sp['shelfOpts'] is Map) puts['shelfOpts'] = sp['shelfOpts'];
-        for (final e in ((sp['p'] as Map?) ?? const {}).entries) {
-          final k = '${e.key}';
-          if (_isShelfPref(k)) puts[k] = e.value;
-        }
+        _putPrefs(sp['p'], _isShelfPref, puts);
         puts['sync:prefsTs'] = rTs;
       }
     }
@@ -547,10 +554,8 @@ class Sync {
       final rTs = (rp['ts'] as int?) ?? 0;
       final lTs = (_box.get('sync:readerTs') as int?) ?? 0;
       if (rTs > lTs) {
-        for (final e in ((rp['r'] as Map?) ?? const {}).entries) {
-          puts['${e.key}'] = e.value;
-        }
-        if (rp['volumeDone'] != null) puts['p.${P.volumeDone}'] = rp['volumeDone'];
+        _putPrefs(rp['r'], (k) => k.startsWith('r.'), puts);
+        _putPrefs({'p.${P.volumeDone}': rp['volumeDone']}, (_) => true, puts);
         puts['sync:readerTs'] = rTs;
       }
     }
@@ -560,11 +565,9 @@ class Sync {
       final rTs = (ap['ts'] as int?) ?? 0;
       final lTs = (_box.get('sync:appearanceTs') as int?) ?? 0;
       if (rTs > lTs) {
-        if (ap['themeMode'] != null) puts['themeMode'] = ap['themeMode'];
-        if (ap['palette'] != null) puts['palette'] = ap['palette'];
-        for (final e in ((ap['p'] as Map?) ?? const {}).entries) {
-          puts['${e.key}'] = e.value;
-        }
+        if (ap['themeMode'] case final int m when m >= 0 && m < ThemeMode.values.length) puts['themeMode'] = m;
+        if (ap['palette'] case final int i when i >= 0 && i < appPalettes.length) puts['palette'] = i;
+        _putPrefs(ap['p'], (k) => k.startsWith('p.ui.'), puts);
         puts['sync:appearanceTs'] = rTs;
       }
     }
@@ -579,7 +582,11 @@ class Sync {
       if (e.value > (purged[aid] ?? 0)) purge[aid] = e.value;
     }
     puts['sync:stats:${remote['device']}'] = jsonEncode(stats);
+    // 删除和写入放在最后一起做：前面出错时本机什么都没改
+    dels.removeAll(puts.keys);
+    if (dels.isNotEmpty) await _box.deleteAll(dels);
     await _box.putAll(puts);
+    await avatar.cleanup?.call();
     // 先删本机的再记「删过了」：中途被打断的话下次合并会再删一次（按日期删，重复删没有副作用）
     for (final MapEntry(key: aid, value: at) in purge.entries) {
       await ReadingStats.purgeLocal(aid, before: at);
@@ -595,12 +602,12 @@ class Sync {
   }
 
   /// 本机分类换了 id：书架顺序、标签顺序和存着分类 id 的设置跟着改。
-  static Future<void> _renameCatRefs(Map<String, String> ids, Map<String, Object?> puts) async {
+  static void _renameCatRefs(Map<String, String> ids, Map<String, Object?> puts, Set<String> dels) {
     if (ids.isEmpty) return;
     for (final MapEntry(key: from, value: to) in ids.entries) {
       final order = _box.get('shelfOrder:lib:$from');
       if (order != null) puts['shelfOrder:lib:$to'] = order;
-      await _box.delete('shelfOrder:lib:$from');
+      dels.add('shelfOrder:lib:$from');
     }
     List<String> mapped(Object? v) => [for (final c in ((v as List?) ?? const []).cast<String>()) ids[c] ?? c];
     if (_box.get('shelfTabOrder') != null) puts['shelfTabOrder'] = mapped(_box.get('shelfTabOrder'));
@@ -609,6 +616,67 @@ class Sync {
     }
     final def = _box.get('p.${P.defaultCat}');
     if (ids[def] != null) puts['p.${P.defaultCat}'] = ids[def];
+  }
+
+  static bool _isVol(Object? v) => v is Map && v['t'] is String && v['c'] is List && (v['c'] as List).every((c) => c is String) && (v['i'] == null || v['i'] is String);
+
+  /// 可选设置并入 [puts]：只收 [allowed] 的键；值只能是数字、布尔、字符串或字符串列表，本机已有的要同类型（整数不接受小数）。
+  static void _putPrefs(Object? remote, bool Function(String key) allowed, Map<String, Object?> puts) {
+    if (remote is! Map) return;
+    for (final e in remote.entries) {
+      final k = '${e.key}';
+      final v = e.value;
+      if (!allowed(k) || v == null) continue;
+      final local = _box.get(k);
+      final ok = switch (local) {
+        null => v is num || v is bool || v is String || (v is List && v.every((x) => x is String)),
+        int() => v is int,
+        double() => v is num,
+        bool() => v is bool,
+        String() => v is String,
+        List() => v is List && v.every((x) => x is String),
+        _ => false,
+      };
+      if (ok) puts[k] = local is double ? (v as num).toDouble() : v;
+    }
+  }
+
+  /// 对方的头像比本机新就换上（文件先写好，旧文件等数据库写完再删）。
+  /// 返回要写入、删除的键，和写入成功后清理旧头像文件的回调。
+  static Future<({Map<String, Object?> puts, Set<String> dels, Future<void> Function()? cleanup})> _mergeAvatar(Map<String, dynamic> remote) async {
+    const none = (puts: <String, Object?>{}, dels: <String>{}, cleanup: null);
+    if (kIsWeb || !AppPrefs.read(P.syncAvatar, true) || remote['avatar'] is! Map) return none;
+    final ra = remote['avatar'] as Map;
+    final rTs = (ra['ts'] as int?) ?? 0;
+    final lTs = (_box.get('avatar:ts') as int?) ?? 0;
+    if (rTs <= lTs) return none;
+    final data = ra['data'] as String?;
+    if (data == null && ra['file'] != null) return none; // 导入的备份文件不带图片，保持原样
+    if (data == null || data.isEmpty) return (puts: <String, Object?>{'avatar:ts': rTs}, dels: {'avatar'}, cleanup: null);
+    try {
+      final bytes = base64Decode(data);
+      final ext = p.extension('a${(ra['ext'] as String?) ?? '.png'}'); // 来自外部，只取扩展名
+      Directory dir;
+      try {
+        dir = Directory(p.join((await getApplicationSupportDirectory()).path, 'avatar'));
+      } catch (_) {
+        dir = Directory(p.join(Directory.systemTemp.path, 'ark_avatar'));
+      }
+      await dir.create(recursive: true);
+      final dest = File(p.join(dir.path, 'avatar_$rTs$ext'));
+      await writeFileAtomic(dest, bytes);
+      Future<void> cleanup() async {
+        try {
+          await for (final f in dir.list()) {
+            if (f is File && f.path != dest.path) await f.delete();
+          }
+        } catch (_) {}
+      }
+
+      return (puts: <String, Object?>{'avatar': dest.path, 'avatar:ts': rTs}, dels: <String>{}, cleanup: cleanup);
+    } catch (_) {
+      return none;
+    }
   }
 
   /// 删掉一本书的统计：记下墓碑（本机已删过，下次合并不用再删），已经同步来的其他设备的统计也去掉。
@@ -690,12 +758,16 @@ class Sync {
 
   static bool _running = false;
 
+  /// 上次 [run] 时因为超过 90 天没更新而跳过的设备文件名。
+  static List<String> lastSkipped = const [];
+
   /// 完整同步一次：上传本机快照，读取并合并其他设备的快照。返回合并了几台设备。
   static Future<int> run() async {
     if (_running) throw '正在同步，请稍候';
     _running = true;
-    final dio = _dio(await password());
+    Dio? dio;
     try {
+      dio = _dio(await password());
       await test();
       await _pushAvatar(dio);
       final put = await dio.put('${_dir()}$deviceId.json', data: jsonEncode(snapshot()), options: Options(contentType: 'application/json; charset=utf-8'));
@@ -704,6 +776,7 @@ class Sync {
       _ok(list, '读取目录');
       var merged = 0;
       final failed = <String>[];
+      final stale = <String>[];
       for (final name in parseListing(list.data as String)) {
         if (name == '$deviceId.json') continue;
         // 一台设备的文件坏了（或者是认不得的格式）只跳过它，别的设备照样合并
@@ -711,21 +784,30 @@ class Sync {
           final r = await dio.get('${_dir()}${Uri.encodeComponent(name)}', options: Options(responseType: ResponseType.plain));
           _ok(r, '下载 $name');
           final remote = jsonDecode(r.data as String) as Map<String, dynamic>;
+          if (remote['at'] case final num at when at < _tombCutoff) throw const StaleSnapshotException();
           await _pullAvatar(dio, remote);
           await merge(remote);
           merged++;
+        } on StaleSnapshotException {
+          stale.add(name);
         } catch (_) {
           failed.add(name);
         }
       }
+      lastSkipped = stale;
       await _box.put('sync:last', DateTime.now().millisecondsSinceEpoch);
       if (failed.isNotEmpty) throw '已合并 $merged 台设备，这些文件读不了，跳过了：${failed.join('、')}';
       return merged;
     } finally {
-      dio.close();
+      dio?.close();
       _running = false;
     }
   }
+
+  /// [lastSkipped] 的说明，没有跳过的返回 null。
+  static String? get skippedNote => lastSkipped.isEmpty
+      ? null
+      : '${lastSkipped.join('、')} 超过 $_tombDays 天没同步，没有合并（合并会把那之后删掉的内容加回来）。这台设备不用了的话，可以在网盘里删掉这个文件';
 
   /// 自动同步用：没配置、正在同步、距上次不到 [minGap] 就跳过；出错不打扰用户。
   static Future<void> auto({Duration minGap = const Duration(minutes: 3)}) async {
@@ -734,6 +816,14 @@ class Sync {
       await run();
     } catch (_) {}
   }
+}
+
+/// 快照超过 90 天没更新：那之前的墓碑已经清掉，合并会让删掉的东西复活，所以不合并。
+class StaleSnapshotException implements Exception {
+  const StaleSnapshotException();
+
+  @override
+  String toString() => '这份数据超过 90 天没有更新，合并会把那之后删掉的书、书签加回来，所以没有合并';
 }
 
 /// 同步页用：手动同步的状态，同步完成后让用到统计的界面重新读取。
@@ -763,7 +853,8 @@ class SyncController extends Notifier<SyncStatus> {
     state = const SyncStatus(busy: true);
     try {
       final n = await Sync.run();
-      state = SyncStatus(message: n == 0 ? '已同步（还没有别的设备的数据）' : '已同步，合并了 $n 台设备的数据');
+      final done = n == 0 ? '已同步（还没有别的设备的数据）' : '已同步，合并了 $n 台设备的数据';
+      state = SyncStatus(message: [done, ?Sync.skippedNote].join('\n'));
     } catch (e) {
       state = SyncStatus(message: e is DioException ? '网络错误：${e.message ?? e.type.name}' : '$e');
     }

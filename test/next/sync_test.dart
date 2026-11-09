@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:ark_novel/next/app_prefs.dart';
 import 'package:ark_novel/next/bookmarks.dart';
+import 'package:ark_novel/next/history.dart';
 import 'package:ark_novel/next/library.dart';
 import 'package:ark_novel/next/rules.dart';
 import 'package:ark_novel/next/stats.dart';
@@ -420,6 +421,114 @@ void main() {
     expect(File(box.get('avatar') as String).readAsStringSync(), 'theirs');
     expect(box.get('avatar') as String, endsWith('.png'));
     expect(box.get('avatar') as String, isNot(contains('evil')));
+    await server.close(force: true);
+  });
+
+  test('可选设置只收自己这组的键，值的类型要和本机一致', () async {
+    await AppPrefs.write(P.syncReaderPrefs, true);
+    await AppPrefs.write(P.syncAppearance, true);
+    await box.putAll({'sync:url': 'https://mine.example/dav/', 'cookie': 'mine', 'r.fontSize': 18.0, 'r.theme': 5});
+    await Sync.merge(remote(extra: {
+      'readerPrefs': {
+        'ts': 10,
+        'r': {'r.fontSize': 20, 'r.theme': 'x', 'r.dual': false, 'sync:url': 'https://evil.example/', 'cookie': 'evil'},
+        'volumeDone': {'bad': 1},
+      },
+      'appearance': {
+        'ts': 10,
+        'themeMode': 9,
+        'palette': 2,
+        'p': {'p.ui.pureBlack': false, 'proxy': '1.2.3.4:80', 'lib:books': {}},
+      },
+    }));
+    expect(box.get('sync:url'), 'https://mine.example/dav/');
+    expect(box.get('cookie'), 'mine');
+    expect(box.get('proxy'), isNull);
+    expect(box.get('lib:books'), isNull);
+    expect(box.get('r.fontSize'), 20.0); // 整数也收，存成小数
+    expect(box.get('r.theme'), 5); // 类型不对的不收
+    expect(box.get('r.dual'), false);
+    expect(box.get('p.${P.volumeDone}'), isNull);
+    expect(box.get('themeMode'), isNull); // 超出范围
+    expect(box.get('palette'), 2);
+    expect(box.get('p.ui.pureBlack'), false);
+  });
+
+  test('删除、清空阅读历史会同步，之后又读的留下', () async {
+    Map<String, Object> h(String aid, int time) => {'aid': aid, 'title': 'T', 'img': '', 'cid': 'c', 'chapter': 'c', 'time': time};
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await box.put('history2', [h('1', now - 1000), h('2', now - 1000)]);
+    await ReadingHistory.remove('1');
+    await Sync.merge(remote(extra: {'history': [h('1', now - 2000), h('2', now - 2000)]}));
+    expect((box.get('history2') as List).map((e) => e['aid']), ['2']);
+
+    await ReadingHistory.clear();
+    await Sync.merge(remote(extra: {'history': [h('2', now - 2000), h('3', now + 60000)]}));
+    expect((box.get('history2') as List).map((e) => e['aid']), ['3']);
+
+    // 对方删的，本机也删
+    await box.delete('sync:tomb');
+    await box.put('history2', [h('4', now - 1000)]);
+    await Sync.merge(remote(extra: {'tomb': {'h:4': now}}));
+    expect(box.get('history2'), isEmpty);
+  });
+
+  test('超过 90 天没更新的快照不合并，免得删掉的东西复活', () async {
+    final old = DateTime.now().subtract(const Duration(days: 91)).millisecondsSinceEpoch;
+    await expectLater(Sync.merge(remote(extra: {'at': old, 'progress': {'1': ['a', 1, 5]}})), throwsA(isA<StaleSnapshotException>()));
+    expect(box.get('progress:1'), isNull);
+    await expectLater(Sync.importBackup(jsonEncode(remote(extra: {'at': old}))), throwsA(isA<StaleSnapshotException>()));
+    await Sync.merge(remote(extra: {'at': DateTime.now().millisecondsSinceEpoch, 'progress': {'1': ['a', 1, 5]}}));
+    expect(box.get('progress:1'), ['a', 1, 5]);
+  });
+
+  test('对方数据格式不对的条目只跳过那一条；本机旧格式的进度也能比较', () async {
+    await box.put('progress:1', ['a', 10]); // 旧版本没有时间
+    await Sync.merge(remote(extra: {
+      'progress': {'1': ['b', 5, 100], '2': ['x', 1], '3': 'bad', '4': ['y', 2.5, 100]},
+      'vols': {
+        '1': [{'t': '第一卷', 'c': ['c1'], 'i': null}],
+        '2': [{'t': 1, 'c': 'x'}],
+      },
+    }));
+    expect(box.get('progress:1'), ['b', 5, 100]);
+    expect(box.get('progress:2'), isNull);
+    expect(box.get('progress:3'), isNull);
+    expect(box.get('progress:4'), isNull);
+    expect(Volumes.of('1').single.title, '第一卷');
+    expect(box.get('vols:2'), isNull);
+    expect(Volumes.of('2'), isEmpty);
+  });
+
+  test('WebDAV：超过 90 天没同步的设备跳过并说明，其他照常', () async {
+    final files = <String, String>{
+      'old.json': jsonEncode(remote(extra: {'device': 'old', 'at': DateTime.now().subtract(const Duration(days: 100)).millisecondsSinceEpoch, 'progress': {'5': ['a', 1, 5]}})),
+      'new.json': jsonEncode(remote(extra: {'device': 'new', 'progress': {'6': ['b', 1, 5]}})),
+    };
+    final server = await HttpServer.bind('127.0.0.1', 0);
+    server.listen((req) async {
+      final name = Uri.decodeFull(req.uri.path).split('/').last;
+      final body = await utf8.decoder.bind(req).join();
+      final res = req.response;
+      if (req.method == 'PROPFIND') {
+        res.statusCode = 207;
+        res.write('<d:multistatus xmlns:d="DAV:">${[for (final k in files.keys) '<d:response><d:href>/dav/ArkNovel/$k</d:href></d:response>'].join()}</d:multistatus>');
+      } else if (req.method == 'PUT') {
+        files[name] = body;
+        res.statusCode = 201;
+      } else if (req.method == 'GET' && files.containsKey(name)) {
+        res.write(files[name]);
+      } else {
+        res.statusCode = 404;
+      }
+      await res.close();
+    });
+    await Sync.save(url: 'http://127.0.0.1:${server.port}/dav/', user: 'me', pass: 'p', folder: 'ArkNovel');
+    expect(await Sync.run(), 1);
+    expect(Sync.lastSkipped, ['old.json']);
+    expect(Sync.skippedNote, contains('old.json'));
+    expect(box.get('progress:5'), isNull);
+    expect(box.get('progress:6'), ['b', 1, 5]);
     await server.close(force: true);
   });
 }

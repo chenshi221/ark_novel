@@ -20,7 +20,8 @@ class Backup {
   static const _pending = 'restore_pending';
   static const _dirs = ['avatar', 'font'];
 
-  /// 登录信息、代理和 WebDAV 账号留在本机：不进备份，恢复时也不动
+  /// 登录信息、代理、WebDAV 账号和这台设备的同步身份留在本机：不进备份，恢复时也不动。
+  /// `sync:device` 跟着备份走的话，恢复到另一台设备后两台用同一个 ID，同步时互相覆盖、也不再合并对方。
   static const _localKeys = {
     'cookie',
     'ua',
@@ -32,6 +33,10 @@ class Backup {
     'sync:user',
     'sync:pass',
     'sync:folder',
+    'sync:device',
+    'sync:avatarUp',
+    'sync:last',
+    'sync:passMoved',
     'lib:imported',
     'lib:ops',
     'imgShrunk2',
@@ -44,6 +49,7 @@ class Backup {
 
   static String make() => jsonEncode({
     'backup': 3,
+    'device': Sync.deviceId,
     'box': {for (final k in _box.keys.whereType<String>().where((k) => !_isLocal(k))) k: _box.get(k)},
   });
 
@@ -151,7 +157,10 @@ class Backup {
       if (await dest.exists()) await dest.delete(recursive: true);
       await src.rename(dest.path);
     }
-    final saved = Map<String, dynamic>.from((jsonDecode(await File(p.join(pending.path, 'data.json')).readAsString()) as Map)['box'] as Map);
+    final m = jsonDecode(await File(p.join(pending.path, 'data.json')).readAsString()) as Map;
+    final saved = Map<String, dynamic>.from(m['box'] as Map);
+    // 备份是哪台设备的（旧版备份记在 box 的 sync:device 里）
+    final from = m['device'] ?? saved['sync:device'];
     saved.removeWhere((k, _) => _isLocal(k));
     // 这两个存的是绝对路径，换设备、换包名后要指到新位置
     if (saved['avatar'] case final String v) saved['avatar'] = p.join(supportDir, 'avatar', p.basename(v));
@@ -159,6 +168,8 @@ class Backup {
     final box = await Hive.openBox('session');
     await box.deleteAll(box.keys.whereType<String>().where((k) => !_isLocal(k)).toList());
     await box.putAll(saved);
+    // 恢复的是别的设备（或重装前的本机）的备份：统计记到那台设备名下，和它同步来的统计不会重复相加
+    if (from is String && from != box.get('sync:device')) await Sync.adoptLocalStatsAs(from);
     await box.close(); // 重新打开时读到的才和平时的类型一样
     await pending.delete(recursive: true);
   }
@@ -171,10 +182,14 @@ class Backup {
   static bool _wanted(String k) => _exact.contains(k) || _prefixes.any(k.startsWith);
 
   /// 导入旧版的 JSON 备份：只合并，不覆盖现有的。同步快照按同步规则并入（本机自己导出的跳过）；书架里没有的书、没有的分类补上；
-  /// 其余设置只补本机还没有的。返回恢复了多少本书。
+  /// 其余设置只补本机还没有的；删除过（有墓碑）的书和分类不补回来。返回恢复了多少本书。
   static Future<int> restore(String json) async {
     final m = jsonDecode(json) as Map<String, dynamic>;
-    if (m['device'] != Sync.deviceId) await Sync.importBackup(json);
+    try {
+      await Sync.importBackup(json);
+    } on StaleSnapshotException {
+      // 太旧的快照不按同步规则合并，下面只补书架上还没有、也没删过的书
+    }
     final extra = (m['extra'] as Map?) ?? const {};
     var books = 0;
     for (final e in extra.entries) {
@@ -183,7 +198,7 @@ class Backup {
       if (k == 'lib:books') {
         final mine = Map.of((_box.get(k) as Map?) ?? const {});
         for (final b in (e.value as Map).entries) {
-          if (!mine.containsKey(b.key)) {
+          if (!mine.containsKey(b.key) && !Sync.isDeleted('lib:${b.key}', ((b.value as Map)['added'] as int?) ?? 0)) {
             mine[b.key] = b.value;
             books++;
           }
@@ -192,7 +207,11 @@ class Backup {
       } else if (k == 'lib:cats') {
         final mine = ((_box.get(k) as List?) ?? const []).cast<Map>().toList();
         final ids = mine.map((c) => c['id']).toSet();
-        await _box.put(k, [...mine, for (final c in (e.value as List).cast<Map>()) if (!ids.contains(c['id'])) c]);
+        await _box.put(k, [
+          ...mine,
+          for (final c in (e.value as List).cast<Map>())
+            if (!ids.contains(c['id']) && !Sync.isDeleted('cat:${c['id']}', (c['ts'] as int?) ?? 0)) c,
+        ]);
       } else if (!_box.containsKey(k)) {
         await _box.put(k, e.value);
       }
