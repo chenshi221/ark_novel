@@ -270,6 +270,7 @@ bool isCloudflare(Object e) => e is Cloudflare403Exception || e is CloudflareCha
 /// 登录状态。没登录也能进主界面（游客），需要账号的页面再提示登录。
 class SessionController extends Notifier<SessionState> {
   int _restoreEpoch = 0;
+  int _cookieSwaps = 0;
 
   static UserInfo? _tryParseUser(String? html) {
     if (html == null) return null;
@@ -352,16 +353,19 @@ class SessionController extends Notifier<SessionState> {
     // 刚启动时 build 已经按上次的账号信息进了主界面，别再切回"检查中"；
     // 验证完重新确认（afterVerify）仍走"检查中"，确认后主界面才会重新同步书架
     if (!(startup && state is SessionLoggedIn)) state = const SessionChecking();
+    final swaps = _cookieSwaps;
     try {
       final user = await _fetchUser().timeout(const Duration(seconds: 6));
       if (epoch != _restoreEpoch) return;
       state = SessionLoggedIn(user);
-    } on Wenku8UnexpectedPageException {
-      if (epoch != _restoreEpoch) return;
-      await _clear();
-      state = const SessionLoggedOut(message: '登录已过期，请重新登录');
     } catch (e) {
       if (epoch != _restoreEpoch) return;
+      // 只有确认是要求登录的页面才清登录（见 [_fetchUser]）；途中换过 cookie 时请求可能没带登录 cookie，这个结论不可信
+      if (e is Wenku8UnexpectedPageException && swaps == _cookieSwaps) {
+        await _clear();
+        state = const SessionLoggedOut(message: '登录已过期，请重新登录');
+        return;
+      }
       // 联网失败不等于没登录：有 cookie 和上次保存的账号信息就按离线登录处理
       final cached = _tryParseUser(_store.userHtml);
       final verify = isCloudflare(e);
@@ -371,6 +375,8 @@ class SessionController extends Notifier<SessionState> {
 
   /// 过完 Cloudflare 验证（或登录）后，WebView 里的 cookie 分流：登录 cookie 全站点通用，其余只属于验证过的站点。
   Future<void> acceptWebCookies(String cookies, {String? userAgent, bool login = true}) async {
+    // 下面要先清空 cookie 再放回去，这段时间里的确认请求可能不带登录 cookie。不能作废确认：这里可能正由确认请求的网页兜底调用
+    ++_cookieSwaps;
     final pairs = cookies.split(';').map((e) => e.trim()).where((e) => e.contains('='));
     final jieqi = pairs.where((e) => e.startsWith('jieqi')).join(';');
     final cf = pairs.where((e) => !e.startsWith('jieqi')).join(';');
@@ -384,6 +390,7 @@ class SessionController extends Notifier<SessionState> {
     }
     await _client.clearCookie();
     await _restoreCookies();
+    ++_cookieSwaps;
   }
 
   /// 原生 App：在内嵌网页里登录后拿到的 cookie。
@@ -417,9 +424,17 @@ class SessionController extends Notifier<SessionState> {
     }
   }
 
+  /// 取用户页。不是用户页时：确认是要求登录的页面才抛 [Wenku8UnexpectedPageException]（调用方据此清掉登录），
+  /// 其他意外页面（维护页、没认出来的验证页）抛 [_OddUserPage]，按网络问题处理、保留登录。
   Future<UserInfo> _fetchUser() async {
     final html = await _client.getPage(_urls.userInfo());
-    final user = Wenku8Parser.userInfo(html);
+    final UserInfo user;
+    try {
+      user = Wenku8Parser.userInfo(html);
+    } on Wenku8UnexpectedPageException {
+      if (Wenku8Parser.needsLogin(html)) rethrow;
+      throw const _OddUserPage();
+    }
     await _store.setUserHtml(html);
     return user;
   }
@@ -432,8 +447,9 @@ class SessionController extends Notifier<SessionState> {
         await _client.dio.post('$previewProxyBase/__session/logout');
       } catch (_) {}
     }
-    // 书架这类账号私有的离线备份一并清掉，换账号不会看到上一个人的内容
-    if (s is SessionLoggedIn) await PageStore.removeScope(s.user.uid);
+    // 书架这类账号私有的离线备份一并清掉，换账号不会看到上一个人的内容（还在确认登录时按上次保存的账号）
+    final uid = s is SessionLoggedIn ? s.user.uid : _tryParseUser(_store.userHtml)?.uid;
+    if (uid != null && uid.isNotEmpty) await PageStore.removeScope(uid);
     await _clear();
     state = const SessionLoggedOut();
   }
@@ -447,3 +463,11 @@ class SessionController extends Notifier<SessionState> {
 }
 
 final sessionProvider = NotifierProvider<SessionController, SessionState>(SessionController.new);
+
+/// 用户页的位置拿到的既不是用户页、也不是登录页（维护页、没认出来的验证页）：登录状态未知。
+class _OddUserPage implements Exception {
+  const _OddUserPage();
+
+  @override
+  String toString() => '网站返回了意外的页面，暂时确认不了登录状态，请稍后再试';
+}

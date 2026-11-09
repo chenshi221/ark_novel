@@ -62,7 +62,7 @@ class Wenku8Urls {
   /// 账号密码登录的表单内容。[keepSeconds] 为登录有效期（秒），wenku8 不接受"临时登录"。
   String loginForm(String username, String password, {int keepSeconds = 315360000}) =>
       "username=${Wenku8Charset.percentEncode(username, charset)}"
-      "&password=${Uri.encodeQueryComponent(password)}"
+      "&password=${Wenku8Charset.percentEncode(password, charset)}"
       "&usecookie=$keepSeconds&action=login";
 
   /// 发表书评、回复时表单里 `Submit` 字段的值（按钮文字，带 `+` 表示的空格）

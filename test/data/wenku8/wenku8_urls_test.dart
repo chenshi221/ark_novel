@@ -27,6 +27,8 @@ void main() {
 
   test('账号密码登录表单：用户名按页面编码，有效期默认很长', () {
     expect(gbk.loginSubmit(), '$base/login.php?do=submit');
-    expect(gbk.loginForm('中a', 'p&ss'), 'username=%D6%D0%61&password=p%26ss&usecookie=315360000&action=login');
+    expect(gbk.loginForm('中a', 'p&ss'), 'username=%D6%D0%61&password=%70%26%73%73&usecookie=315360000&action=login');
+    // 密码和用户名一样按网站编码（GBK）提交，不是 UTF-8
+    expect(gbk.loginForm('a', '中'), 'username=%61&password=%D6%D0&usecookie=315360000&action=login');
   });
 }

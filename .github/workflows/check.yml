@@ -109,5 +109,15 @@ jobs:
         run: flutter config --no-enable-swift-package-manager
 
       - name: Build
-        if: contains(needs.check.outputs.platforms, matrix.platform)
+        if: matrix.platform != 'android' && contains(needs.check.outputs.platforms, matrix.platform)
         run: flutter build ${{ matrix.args }} -t lib/next/main.dart
+
+      # Gradle 和 Kotlin 编译器从 GitHub releases 下载，常遇到 504，一失败整个任务就结束；真正的编译错误也会多跑两次才报失败
+      - name: Build (android)
+        if: matrix.platform == 'android' && contains(needs.check.outputs.platforms, matrix.platform)
+        run: |
+          for attempt in 1 2 3; do
+            flutter build ${{ matrix.args }} -t lib/next/main.dart && exit 0
+            [ "$attempt" = 3 ] || sleep 120
+          done
+          exit 1
