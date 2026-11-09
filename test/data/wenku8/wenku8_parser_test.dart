@@ -164,4 +164,51 @@ void main() {
     expect(replies[0].time, '2024-02-03 10:00');
     expect(replies[1].content, '正文二');
   });
+
+  test('首页推荐：书的链接格式不对时只是没有书号，不会整个失败', () {
+    const cover = "float: left;text-align:center;width: 95px; height:155px;overflow:hidden;";
+    const html = '''
+    <div id="centers">
+      <div class="block"></div>
+      <div class="block">
+        <div class="blocktitle">本周热门(更多)</div>
+        <div style="$cover"><a href="/book/123/"><img src="https://img.wenku8.com/a.jpg"></a><a href="/book/123/">书一</a></div>
+        <div style="$cover"><a href="https://www.wenku8.net/book/456.htm"><img src="https://img.wenku8.com/b.jpg"></a><a>书二</a></div>
+        <div style="$cover"><a href="/modules/article/articleinfo.php"><img src="https://img.wenku8.com/c.jpg"></a><a>书三</a></div>
+      </div>
+    </div>
+    ''';
+    final blocks = Wenku8Parser.recommend(html);
+    expect(blocks.first.title, '本周热门');
+    expect(blocks.first.list.map((e) => e.aid), ['123', '456', '']);
+  });
+
+  test('详情：热度等级不止一个字母时也完整', () {
+    const html = '''
+    <div id="content">
+      <table>
+        <tr></tr><tr></tr>
+        <tr><td></td><td>小说作者：甲</td><td>文章状态：连载中</td><td>最后更新：2024-01-02</td></tr>
+      </table>
+      <table><tr><td><img src="/test.jpg"></td></tr></table>
+      <table><tr><td></td><td><span>作品Tags：魔法</span><span>作品热度：SSS级，当前热度上升指数为：A级</span></td></tr></table>
+    </div>
+    ''';
+    final d = Wenku8Parser.novelDetail(html);
+    expect(d.heat, 'SSS级');
+    expect(d.trending, 'A级');
+  });
+
+  test('回复：用户链接后面带别的参数时 uid 只取数字', () {
+    const row = '<table><tr><td><a href="/userpage.php?uid=42&amp;page=1">甲</a></td><td><div>#1</div><div>2024-01-01 | 引用</div><div>内容</div></td></tr></table>';
+    final html = '<div id="content"><table></table><table></table><table></table>$row<table></table><table></table></div>';
+    expect(Wenku8Parser.replies(html).single.uid, '42');
+  });
+
+  test('按书号拼封面：没有书号时返回空串，5 位书号按千位分目录', () {
+    expect(Wenku8Parser.coverUrl(''), '');
+    expect(Wenku8Parser.coverUrl('2'), 'https://img.wenku8.com/image/0/2/2s.jpg');
+    expect(Wenku8Parser.coverUrl('1973'), 'https://img.wenku8.com/image/1/1973/1973s.jpg');
+    expect(Wenku8Parser.coverUrl('10086'), 'https://img.wenku8.com/image/10/10086/10086s.jpg');
+  });
 }

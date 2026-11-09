@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -51,6 +52,21 @@ class _FakeTxt implements TxtDownloader {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// 下载要等 [gate] 放行的 TXT 下载器：开始下载时完成 [started]。
+class _SlowTxt extends _FakeTxt {
+  _SlowTxt(this.gate);
+
+  final Completer<void> gate;
+  final started = Completer<void>();
+
+  @override
+  Future<Uint8List> fetch(String aid) async {
+    started.complete();
+    await gate.future;
+    return super.fetch(aid);
+  }
 }
 
 /// 网站的章节页：正文就是 [body]。
@@ -111,6 +127,19 @@ void main() {
     expect(txt.fetches, 1);
     expect(ChapterCache.has('10', '1'), isTrue);
     expect(ChapterCache.offline('10'), isTrue);
+  });
+
+  test('下载全本 TXT 期间删了这本的缓存：下完不再写回去，也不记成离线缓存', () async {
+    final slow = _SlowTxt(Completer<void>());
+    final c2 = ProviderContainer(overrides: [appApiProvider.overrideWithValue(_FakeApi()), txtDownloaderProvider.overrideWithValue(slow)]);
+    addTearDown(c2.dispose);
+    final got = c2.read(unlockServiceProvider).chapter('20', '2', cat);
+    await slow.started.future;
+    await ChapterCache.remove('20');
+    slow.gate.complete();
+    await expectLater(got, throwsA(isA<ChapterLockedException>()));
+    expect(ChapterCache.has('20', '1'), isFalse);
+    expect(ChapterCache.offline('20'), isFalse);
   });
 
   test('插图章：TXT 里没有，抛 ChapterLockedException，也不再重新下载', () async {
