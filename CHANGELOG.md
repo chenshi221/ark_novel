@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.4](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.0.3...ark_novel-v1.0.4) (2026-11-09)
+
+
+### Bug Fixes
+
+* 修复确认登录途中走网页兜底时卡在启动页 ([776882f](https://github.com/chenshi221/ark_novel/commit/776882f19d5135aec72564134813abfad07ed3e7))
+* 登录、cookie 与生物识别锁的安全修复，并修复启动页卡住的回归 ([63b2116](https://github.com/chenshi221/ark_novel/commit/63b2116c846cb1d0288be9a0b378d6af84988adc))
+
 ## [1.0.3](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.0.2...ark_novel-v1.0.3) (2026-11-09)
 
 
