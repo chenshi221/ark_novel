@@ -91,6 +91,7 @@ flutter:
     - assets/images/
     - assets/theme/
     - assets/licenses/
+    - assets/opencc/
 
   fonts:
     - family: LXGWWenKai
