@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.0.5...ark_novel-v1.1.0) (2026-11-11)
+
+
+### Features
+
+* 繁体中文（台湾写法）：正文和界面分别切换 ([3685dfe](https://github.com/chenshi221/ark_novel/commit/3685dfe163827368ac8627dfebe38fd41b1a39cf))
+* 繁体中文（台湾写法）：正文和界面分别切换 ([1560231](https://github.com/chenshi221/ark_novel/commit/1560231478789a6324d313d8f870d7e76ef68e38))
+
 ## [1.0.5](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.0.4...ark_novel-v1.0.5) (2026-11-10)
 
 
