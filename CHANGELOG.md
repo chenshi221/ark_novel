@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.1.0...ark_novel-v1.1.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* 修复同步、账号切换和并发写入的数据安全问题 ([bad2466](https://github.com/chenshi221/ark_novel/commit/bad24662971133bc5a86deabe9040f985792e228))
+* 修复同步、账号切换和并发写入的数据安全问题 ([2c77fad](https://github.com/chenshi221/ark_novel/commit/2c77fad62e75f88c835cb8e7680247471e56a434))
+
 ## [1.1.0](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.0.5...ark_novel-v1.1.0) (2026-11-11)
 
 
