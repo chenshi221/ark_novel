@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.2](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.1.1...ark_novel-v1.1.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* 换号后首次同步保留新账号的书架操作，繁体界面开关恢复同步 ([8c3d048](https://github.com/chenshi221/ark_novel/commit/8c3d04863562778546e5811bb839d662e3532760))
+* 换号后首次同步保留新账号的书架操作，繁体界面开关恢复同步 ([3b4d7b1](https://github.com/chenshi221/ark_novel/commit/3b4d7b14e358fe7a04d1a169f7eb0011223af9f4))
+
 ## [1.1.1](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.1.0...ark_novel-v1.1.1) (2026-11-11)
 
 
