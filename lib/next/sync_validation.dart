@@ -89,6 +89,7 @@ const _preferences = <String, Object>{
   'p.${P.volumeDone}': true,
   'p.${P.pureBlack}': false,
   'p.${P.sceneMotion}': true,
+  'p.${P.uiHant}': false,
 };
 
 const _ranges = <String, (num, num)>{

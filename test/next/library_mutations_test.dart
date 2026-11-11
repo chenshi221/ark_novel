@@ -186,6 +186,26 @@ void main() {
     expect(api.removes, isEmpty);
   });
 
+  test('换号后、首次对账前排的操作：属于新账号，对账时照常推送', () async {
+    await box.putAll({
+      'lib:imported': 'previous-user',
+      'lib:books': {'1': const LibBook(aid: '1', title: 'one', img: '', bid: 'previous-bid').toMap()},
+      'lib:ops': {
+        'old': {'op': 'add'},
+      },
+    });
+    api.books = [remote('1', 'current-bid')];
+    login();
+    await library().remove(['1']);
+    await library().add('2', 'two', '');
+    expect(api.removes, isEmpty); // 对账前不推送
+    expect(await library().sync(details: false), isNull);
+    expect(api.removes, ['current-bid']);
+    expect(api.adds, ['2']);
+    expect(library().state.books.keys, ['2']);
+    expect(box.get('lib:ops'), isEmpty);
+  });
+
   test('同账号对账仍会移出网站已删的书并记墓碑', () async {
     await box.putAll({
       'lib:imported': loggedIn.user.uid,
