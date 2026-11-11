@@ -193,6 +193,20 @@ class LibraryController extends Notifier<LibraryState> {
 
   Map<String, Map> _ops() => ((_box.get('lib:ops') as Map?) ?? const {}).map((k, v) => MapEntry(k as String, Map.from(v as Map)));
 
+  /// 把操作队列记到 [uid] 名下。队列还属于对过账的旧账号时先清空：旧账号的操作不能发给新账号，
+  /// 而换号后在新账号下排的操作要留着。游客（从没对过账）排的操作照常保留。
+  /// Hive 在返回前就更新了内存，调用后可以直接读 [_ops]。
+  Future<void> _claimOps(String? uid) {
+    if (uid == null || _box.get('lib:opsFor') == uid) return Future<void>.value();
+    final owner = _box.get('lib:imported');
+    return Future.wait([if (owner != null && owner != uid) _box.delete('lib:ops'), _box.put('lib:opsFor', uid)]);
+  }
+
+  String? get _uid => switch (ref.read(sessionProvider)) {
+    SessionLoggedIn(:final user) => user.uid,
+    _ => null,
+  };
+
   /// 把一个操作并进 [ops]：加了又移（或反过来）且还没推到网站，两个操作抵消（正在推送中的那条不能抵消）。
   /// 移出又加回时返回原来的 bid（书还用它），否则返回 null。
   String? _enqueue(Map<String, Map> ops, String aid, Map op) {
@@ -205,10 +219,11 @@ class LibraryController extends Notifier<LibraryState> {
   }
 
   Future<void> _queue(String aid, Map op) async {
+    final claiming = _claimOps(_uid);
     final ops = _ops();
     final bid = _enqueue(ops, aid, op);
     final saving = bid != null && state.books[aid] != null ? _save({...state.books, aid: state.books[aid]!.copyWith(bid: bid)}) : Future<void>.value();
-    await Future.wait([saving, _box.put('lib:ops', ops)]);
+    await Future.wait([claiming, saving, _box.put('lib:ops', ops)]);
   }
 
   Future<void> add(String aid, String title, String img, {List<String> cats = const []}) async {
@@ -226,6 +241,7 @@ class LibraryController extends Notifier<LibraryState> {
     _refresh();
     final books = {...state.books};
     final removed = <String>[];
+    final claiming = _claimOps(_uid);
     final ops = _ops();
     for (final aid in aids) {
       final b = books.remove(aid);
@@ -235,7 +251,7 @@ class LibraryController extends Notifier<LibraryState> {
       }
     }
     // 先在同一轮事件里提交全部改动，再等落盘；等待期间新增的书不能被旧 books 覆盖。
-    await Future.wait([_save(books), _box.put('lib:ops', ops), Sync.tombstone(removed)]);
+    await Future.wait([claiming, _save(books), _box.put('lib:ops', ops), Sync.tombstone(removed)]);
     unawaited(_push());
   }
 
@@ -247,7 +263,9 @@ class LibraryController extends Notifier<LibraryState> {
     final back = [for (final b in books) if (!state.books.containsKey(b.aid)) restoredBook(b, cats, now)];
     if (back.isEmpty) return;
     // 不走 [_queue]：同步排的「移出」要直接换成「加入」，不能当成本机加了又移、互相抵消（网站上可能早就移出了）
+    final claiming = _claimOps(_uid);
     await Future.wait([
+      claiming,
       _save({...state.books, for (final b in back) b.aid: b}),
       _box.put('lib:ops', {..._ops(), for (final b in back) b.aid: {'op': 'add'}}),
     ]);
@@ -397,8 +415,8 @@ class LibraryController extends Notifier<LibraryState> {
     if (!first && !force && now - since < 30 * 60 * 1000) return null;
     _syncing = true;
     try {
-      // 无账号绑定的队列是游客本地加入的书，可以推送；旧账号的操作不能发送给新账号。
-      if (first && owner != null) await _box.delete('lib:ops');
+      // 旧账号的操作不能发送给新账号；换号后在新账号下排的、游客排的照常推送。
+      await _claimOps(s.user.uid);
       if (!_sameAccount(s.user.uid)) return null;
       final api = ref.read(apiProvider);
       final remote = <String, RemoteBook>{};
