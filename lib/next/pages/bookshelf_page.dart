@@ -22,6 +22,7 @@ import '../read_state.dart';
 import '../router.dart';
 import '../session.dart';
 import '../settings.dart';
+import '../shelf_3d.dart';
 import '../theme.dart';
 import '../theme_doodle.dart';
 import '../theme_squire.dart';
@@ -58,7 +59,7 @@ class ShelfOptions {
   /// 排序方向反过来（每种排序都有自己默认的方向）
   final bool reverse;
 
-  /// 0 网格 1 紧凑网格 2 列表 3 卷册（一本书画成一摞卷）
+  /// 0 网格 1 紧凑网格 2 列表 3 卷册（一本书画成一摞卷） 4 立体
   final int display;
 
   /// 筛选：有未读 / 已开始读 / 有缓存 / 有书签 / 已完结
@@ -424,7 +425,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
     if (books.isEmpty) return;
     final b = books[math.Random().nextInt(books.length)];
     final o = shelfOptionsFor(ref.read(shelfOptionsProvider), _curTab);
-    context.push(o.display == 3 ? Routes.volumes(b.aid) : Routes.novel(b.aid));
+    context.push(o.display == 3 || o.display == 4 ? Routes.volumes(b.aid) : Routes.novel(b.aid));
   }
 
   /// 只检查当前标签里的书的更新
@@ -797,9 +798,9 @@ class _OptionsSheetState extends ConsumerState<_OptionsSheet> with SingleTickerP
     return ListView(
       padding: const EdgeInsets.only(bottom: 16),
       children: [
-        XSegments<int>(title: '显示方式', value: o.display, options: const {0: '网格', 1: '紧凑', 2: '列表', 3: '卷册'}, onChanged: (v) => _set(o.copyWith(display: v))),
+        XChips<int>(title: '显示方式', value: o.display, options: const {0: '网格', 1: '紧凑', 2: '列表', 3: '卷册', 4: '立体'}, onChanged: (v) => _set(o.copyWith(display: v))),
         // 就是设置里的书架列数（竖屏、横屏分开记），这里放常用的几种；设置里选了别的也列出来
-        if (o.display != 2)
+        if (o.display != 2 && o.display != 4)
           XSegments<int>(
             title: '每行几本',
             value: cols,
@@ -1059,6 +1060,34 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
       body = _reorderable(books);
     } else if (o.display == 2) {
       body = ListView.builder(padding: const EdgeInsets.only(bottom: 24), itemCount: books.length, itemBuilder: (context, i) => _listTile(books[i]));
+    } else if (o.display == 4) {
+      // 正好一屏高；外面套一层能滚的，下拉同步照常可用
+      body = LayoutBuilder(
+        builder: (context, c) => SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: SizedBox(
+            height: c.maxHeight,
+            child: ValueListenableBuilder<String>(
+              valueListenable: widget.activeTab,
+              builder: (context, tab, _) => Shelf3DView(
+                books: books,
+                // 每个标签记住上次停在哪本，只存在本机（不进备份、不同步）
+                initialAid: Hive.box('session').get('shelf3d:${widget.catId}') as String?,
+                onFocusChanged: (aid) => Hive.box('session').put('shelf3d:${widget.catId}', aid),
+                selected: _selected,
+                heroEnabled: tab == widget.catId,
+                coverOf: _cover,
+                badgeOf: _badge,
+                subtitleOf: _shelf3dLine,
+                actionOf: _shelf3dAction,
+                onOpen: (b) => _openAndRefresh(Routes.volumes(b.aid)),
+                onRead: (b, cid) => _openAndRefresh(Routes.reader(b.aid, cid)),
+                onToggleSelect: (b) => _toggle(b.aid),
+              ),
+            ),
+          ),
+        ),
+      );
     } else if (o.display == 3) {
       body = LayoutBuilder(
         builder: (context, c) {
@@ -1147,6 +1176,27 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
   }
 
   void _tap(LibBook b) => _selected.isEmpty ? _openAndRefresh(Routes.novel(b.aid)) : _toggle(b.aid);
+
+  /// 立体模式下面的按钮：读过的接着读，没读过的从第一卷开始读，没有分卷信息就打开卷册页。
+  /// 这是这一屏的主按钮，不受设置里封面角「继续阅读」小按钮开关的影响
+  ({String label, String? cid}) _shelf3dAction(LibBook b) {
+    final p = ReadingProgress.of(b.aid);
+    if (p != null) return (label: '继续读', cid: p.cid);
+    final vols = Volumes.of(b.aid);
+    return vols.isEmpty ? (label: '打开', cid: null) : (label: '开始读', cid: startCid(b.aid, vols.first));
+  }
+
+  /// 立体模式书名下面那一行：连载状态 · 读到第几卷 · 未读几章
+  String _shelf3dLine(LibBook b) {
+    final vols = Volumes.of(b.aid).length;
+    final at = readingVolume(b.aid);
+    final n = _unread(b.aid);
+    return [
+      b.done ? '已完结' : '连载中',
+      if (vols > 0) at >= 0 ? '读到第 ${at + 1} / $vols 卷' : '共 $vols 卷',
+      if (n > 0) '未读 $n 章' else if (ReadingProgress.of(b.aid) == null) '还没读',
+    ].join(' · ');
+  }
 
   /// 封面右下角的"继续阅读"：直接回到上次读的位置（读过才有）。
   Widget? _resume(LibBook b) {
