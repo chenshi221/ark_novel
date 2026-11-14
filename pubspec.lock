@@ -49,6 +49,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.7.0"
+  ark_unlock:
+    dependency: "direct main"
+    description:
+      path: "packages/ark_unlock"
+      relative: true
+    source: path
+    version: "0.1.0"
   async:
     dependency: transitive
     description:

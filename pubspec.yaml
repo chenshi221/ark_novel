@@ -39,6 +39,10 @@ dependencies:
   # url编码
   enough_convert: ^1.6.0
 
+  # 可选本地插件（公开仓库仅含空壳，私密实现通过本地 pubspec_overrides.yaml 挂载）
+  ark_unlock:
+    path: packages/ark_unlock
+
   # 包信息获取
   package_info_plus: ^10.2.1
 
