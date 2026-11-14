@@ -159,6 +159,12 @@ class _CloudflareInterceptor extends Interceptor {
       return;
     }
     if (response.statusCode == 403) {
+      final server = response.headers.value('server')?.toLowerCase() ?? '';
+      // nginx 自身的 403 交给外层按 HTTP 403 处理，别拉起无头浏览器白等
+      if (server.contains('nginx') && response.headers.value('cf-ray') == null) {
+        handler.next(response);
+        return;
+      }
       handler.reject(Cloudflare403Exception(requestOptions: response.requestOptions));
       return;
     }

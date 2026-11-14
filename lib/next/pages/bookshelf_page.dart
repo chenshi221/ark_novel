@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import '../../models/common/wenku8_node.dart';
 import '../app_prefs.dart';
 import '../bookmarks.dart';
 import '../cache.dart';
@@ -884,11 +885,26 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     super.dispose();
   }
 
-  /// 下拉：和网站书架同步，再检查更新。
+  /// 下拉：离线时先无感重连，再和网站书架同步、检查更新。
   Future<void> _refresh() async {
-    if (ref.read(sessionProvider) is! SessionLoggedIn) {
+    final s = ref.read(sessionProvider);
+    if (s is! SessionLoggedIn) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('登录后才能和网站书架同步，本地书架照常可用')));
       return;
+    }
+    if (s.offline && !s.needsVerify) {
+      final reason = await ref.read(sessionProvider.notifier).restore(silent: true);
+      if (!mounted) return;
+      if (reason != null) {
+        final onNet = ref.read(nodeProvider) == Wenku8Node.wwwWenku8Net;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(onNet ? '$reason：wenku8.net 可能被本地 DNS 拦截，可切到 wenku8.cc' : '重新连接失败：$reason'),
+            action: onNet ? SnackBarAction(label: '切到 wenku8.cc', onPressed: () => ref.read(nodeProvider.notifier).set(Wenku8Node.wwwWenku8Cc)) : null,
+          ),
+        );
+        return;
+      }
     }
     final err = await ref.read(libraryProvider.notifier).sync(force: true);
     if (!mounted) return;
