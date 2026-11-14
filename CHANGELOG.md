@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.0](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.1.2...ark_novel-v1.2.0) (2026-11-14)
+
+
+### Features
+
+* 书架新增「立体」显示方式 ([0308119](https://github.com/chenshi221/ark_novel/commit/030811907ab280bd769361c83b2d6dee22e294bc))
+* 安卓安装包默认支持 arm64、armeabi-v7a 和 x86_64 三种架构 ([1e1736e](https://github.com/chenshi221/ark_novel/commit/1e1736ef96da478b04427f0521115d00bee9c79b))
+* 设置里的「书籍解锁」改为「妙妙小工具」，入口直接显示 ([26b6e78](https://github.com/chenshi221/ark_novel/commit/26b6e784277a001f02c5fbe5b98b1276662e88f5))
+
+
+### Bug Fixes
+
+* 修复 wenku8.cc 一直显示离线模式，重新连接失败时显示具体原因 ([99c0319](https://github.com/chenshi221/ark_novel/commit/99c0319d28a6b24a71f68e1beeb7b5c4215651d8))
+* 底部导航栏比页面背景深一档，和上面的内容分开 ([07c975f](https://github.com/chenshi221/ark_novel/commit/07c975f0a058b9a683baf5ac302c71c33a8e0c98))
+* 自定义分类标签（如「在追」）里打开卷册页时恢复封面飞过去的动画 ([0707da5](https://github.com/chenshi221/ark_novel/commit/0707da54758b0dc9bcaf0a83d9f8c012b0a3f54b))
+
 ## [1.1.2](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.1.1...ark_novel-v1.1.2) (2026-11-11)
 
 
