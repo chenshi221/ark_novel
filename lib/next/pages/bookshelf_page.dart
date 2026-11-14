@@ -256,6 +256,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
   TabController? _tc;
   List<String> _ids = [];
   String _shown = ''; // 标签栏上次滚到的标签
+  final _activeTab = ValueNotifier<String>(''); // 当前激活的标签 id，用来关掉后台保活标签页的重复 Hero
   final _keys = <String, GlobalKey>{};
   final _stripKey = GlobalKey();
   int _measureRetries = 0;
@@ -267,6 +268,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
   void dispose() {
     shelfSearching.value = false;
     _resumeHidden.dispose();
+    _activeTab.dispose();
     _tc?.dispose();
     _tabScroll.dispose();
     super.dispose();
@@ -289,6 +291,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
       final old = _tc;
       _tc = TabController(length: ids.length, vsync: this, initialIndex: math.max(0, ids.indexOf(cur)));
       _ids = ids;
+      _activeTab.value = _ids[_tc!.index];
       _measureRetries = 0; // 标签变了（比如新建了分类）要重新量下划线的位置
       _tc!.addListener(_scrollToTab);
       if (old != null) WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
@@ -299,8 +302,9 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
 
   void _scrollToTab() {
     final tc = _tc!;
-    if (tc.indexIsChanging) return;
     final id = _ids[tc.index];
+    _activeTab.value = id;
+    if (tc.indexIsChanging) return;
     if (AppPrefs.read(P.lastTab, '') != id) AppPrefs.write(P.lastTab, id);
     if (id == _shown) return;
     _shown = id;
@@ -533,7 +537,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
             Expanded(
               child: NotificationListener<ScrollNotification>(
                 onNotification: _onShelfScroll,
-                child: TabBarView(key: ObjectKey(tc), controller: tc, children: [for (final c in tabs) _Shelf(key: ValueKey(c.id), catId: c.id)]),
+                child: TabBarView(key: ObjectKey(tc), controller: tc, children: [for (final c in tabs) _Shelf(key: ValueKey(c.id), catId: c.id, activeTab: _activeTab)]),
               ),
             ),
           ],
@@ -848,10 +852,11 @@ class _OptionsSheetState extends ConsumerState<_OptionsSheet> with SingleTickerP
 }
 
 class _Shelf extends ConsumerStatefulWidget {
-  const _Shelf({super.key, required this.catId});
+  const _Shelf({super.key, required this.catId, required this.activeTab});
 
   /// 分类 id：空串是"默认"（全部的书），[_ongoingTab] / [_doneTab] 按是否完结分，其余是自己建的分类
   final String catId;
+  final ValueListenable<String> activeTab;
 
   @override
   ConsumerState<_Shelf> createState() => _ShelfState();
@@ -1240,11 +1245,15 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
                 return Stack(
                   clipBehavior: Clip.none, // 后面几卷的边在封面右边、Stack 外面
                   children: [
-                    // 整叠放进 Hero：点开时一起飞过去放大
+                    // 整叠放进 Hero：点开时一起飞过去放大（只有当前标签页开启 Hero，避免保活的相邻标签撞 tag）
                     SizedBox(
                       width: w,
                       height: h,
-                      child: Hero(tag: 'vols:${b.aid}', flightShuttleBuilder: volumeHeroShuttle, child: VolumeStack(cover: _cover(b), behind: behind)),
+                      child: ValueListenableBuilder<String>(
+                        valueListenable: widget.activeTab,
+                        builder: (context, tab, child) => HeroMode(enabled: tab == widget.catId, child: child!),
+                        child: Hero(tag: 'vols:${b.aid}', flightShuttleBuilder: volumeHeroShuttle, child: VolumeStack(cover: _cover(b), behind: behind)),
+                      ),
                     ),
                     if (badge != null) Positioned(top: 6, right: 6, child: badge),
                     if (vols.length == 1)
