@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.9.1](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.9.0...ark_novel-v1.9.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* 保留在网站书架换组的书籍及其本地分类 ([0c6f6bd](https://github.com/chenshi221/ark_novel/commit/0c6f6bd578dc6c966ad8e95cffb2a04a2f10a3a0))
+* 准确保存自动滚屏和图文混合章节的阅读位置 ([f6e7b15](https://github.com/chenshi221/ark_novel/commit/f6e7b15040058b91599ddb9c17ead6bcbda977ce))
+* 减少打开离线插图章节时的读盘和内存占用 ([74c4b05](https://github.com/chenshi221/ark_novel/commit/74c4b057ccf28bea5314b33b40d8d2ed5e75a150))
+* 加快大书架阅读统计与年度报告的汇总 ([dd30d25](https://github.com/chenshi221/ark_novel/commit/dd30d2542f5a9a0a0bfc7246e540dfcae96669d6))
+* 在下次同步时重试未下载的头像 ([bd1472d](https://github.com/chenshi221/ark_novel/commit/bd1472dc66d44942714e740ea8e1cb2a21c5062f))
+* 定期更新 WebDAV 快照以便新设备同步历史数据 ([11a4056](https://github.com/chenshi221/ark_novel/commit/11a405695b887e3edc70d2c101917fa6cb53dfd5))
+* 恢复备份或启用同步选项后重新合并 WebDAV 数据 ([7ff4756](https://github.com/chenshi221/ark_novel/commit/7ff4756d4e9acbcfbaf7f90c3cd54bd600590355))
+* 逐章导出长篇 EPUB 和 TXT 以降低内存占用 ([3d79822](https://github.com/chenshi221/ark_novel/commit/3d79822f44e72fe0c7705f8ad211966d38ef7f95))
+
 ## [1.9.0](https://github.com/chenshi221/ark_novel/compare/ark_novel-v1.8.1...ark_novel-v1.9.0) (2026-11-26)
 
 
