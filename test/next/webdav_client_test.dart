@@ -121,6 +121,24 @@ void main() {
     expect(await Sync.pullOnly(dio: dio), 0);
   });
 
+  test('头像暂时下载失败仍合并进度，下次同 ETag 继续拉取头像', () async {
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final files = {
+      'dOther.json': utf8.encode(jsonEncode({
+        'v': 3, 'at': ts, 'device': 'dOther', 'avatar': {'ts': ts, 'file': 'dOther.avatar', 'ext': '.png'},
+        'progress': {'2': ['c2', 20, 123]},
+      })),
+    };
+    final dio = mockDio(fixedDav(files));
+    expect(await Sync.pullOnly(dio: dio), 1);
+    expect(box.get('progress:2'), ['c2', 20, 123]);
+    expect(box.get('avatar:ts'), isNull);
+    files['dOther.avatar'] = Uint8List.fromList([1, 2, 3]);
+    expect(await Sync.pullOnly(dio: dio), 1);
+    expect(box.get('avatar:ts'), ts);
+    expect(await Sync.pullOnly(dio: dio), 0);
+  });
+
   test('WebDavClient.ensureDirectory 404 时逐级 MKCOL 创建嵌套目录，且不关闭外部注入 Dio', () async {
     final created = <String>{};
     final adapter = _MockAdapter((req) async {

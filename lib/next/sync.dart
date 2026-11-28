@@ -309,16 +309,18 @@ class Sync {
   }
 
   /// 对方的头像比本机新才下载，放进快照交给 [merge]；下载失败就当没变，下次再试。
-  static Future<void> _pullAvatar(WebDavClient client, Map<String, dynamic> remote) async {
+  static Future<bool> _pullAvatar(WebDavClient client, Map<String, dynamic> remote) async {
     final a = remote['avatar'];
-    if (kIsWeb || !AppPrefs.read(P.syncAvatar, true) || a is! Map || a['file'] is! String) return;
-    if (((a['ts'] as int?) ?? 0) <= ((_box.get('avatar:ts') as int?) ?? 0)) return;
+    if (kIsWeb || !AppPrefs.read(P.syncAvatar, true) || a is! Map || a['file'] is! String) return true;
+    if (((a['ts'] as int?) ?? 0) <= ((_box.get('avatar:ts') as int?) ?? 0)) return true;
     try {
       final bytes = await client.getBytes(p.basename(a['file'] as String), what: '下载头像');
       a['data'] = base64Encode(bytes);
+      return true;
     } catch (e) {
       debugPrint('下载同步头像失败：$e');
       remote.remove('avatar');
+      return false;
     }
   }
 
@@ -417,10 +419,13 @@ class Sync {
             final remote = await _decodeJsonAsync(text!) as Map<String, dynamic>;
             validateSyncSnapshot(remote);
             if (remote['at'] case final num at when at < SyncMerge.tombCutoff) throw const StaleSnapshotException();
-            await _pullAvatar(client, remote);
+            final avatarLoaded = await _pullAvatar(client, remote);
             await merge(remote);
             merged++;
-            if (fp != null) {
+            final avatar = remote['avatar'];
+            final avatarApplied = avatar is! Map || !AppPrefs.read(P.syncAvatar, true) || kIsWeb ||
+                ((avatar['ts'] as int?) ?? 0) <= ((_box.get('avatar:ts') as int?) ?? 0);
+            if (fp != null && avatarLoaded && avatarApplied && scope == _currentScope()) {
               _remoteFingerprints[name] = fp;
               metaDirty = true;
             }
