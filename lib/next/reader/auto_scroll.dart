@@ -21,6 +21,7 @@ class ReaderAutoScrollController extends ChangeNotifier {
     this.createTicker,
     DateTime Function()? now,
     this.onScrollStep,
+    this.onScrollPause,
     this.onNextChapter,
     this.onTurnNext,
     this.onSpeedChanged,
@@ -53,6 +54,9 @@ class ReaderAutoScrollController extends ChangeNotifier {
 
   /// 滚动模式单帧推进 [deltaPx] 像素，返回本帧滚动结果。
   final AutoScrollStep Function(double deltaPx)? onScrollStep;
+
+  /// 滚屏暂停或停止时，保存最后一次节流上报后继续滚动的位置。
+  final VoidCallback? onScrollPause;
 
   /// 滚动模式到底部后切到下一章；有下一章返回 true，全书读完返回 false。
   final bool Function()? onNextChapter;
@@ -144,6 +148,7 @@ class ReaderAutoScrollController extends ChangeNotifier {
   /// 暂停（保留控制条，用户可随时点继续）。
   void pause() {
     if (_disposed || !_active || _paused) return;
+    if (isScrollMode) onScrollPause?.call();
     _paused = true;
     _stopClock();
     notifyListeners();
@@ -164,6 +169,7 @@ class ReaderAutoScrollController extends ChangeNotifier {
   void stop() {
     if (_disposed) return;
     final wasActive = _active;
+    if (isRunning && isScrollMode) onScrollPause?.call();
     _active = false;
     _paused = false;
     _turnElapsed = Duration.zero;

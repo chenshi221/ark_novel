@@ -87,6 +87,9 @@ class ScrollBody extends StatefulWidget {
 
 class _ScrollBodyState extends State<ScrollBody> {
   final _controller = ScrollController();
+  final _imageList = GlobalKey();
+  bool _internalJump = false;
+  bool _autoOffsetPending = false;
   final _mountedBlocks = <int, ({int start, int end, GlobalKey key})>{};
   List<(int, int)> _blocks = const [];
   String? _blocksText;
@@ -227,6 +230,12 @@ class _ScrollBodyState extends State<ScrollBody> {
     if (hl != null) _followOffset(hl.$1);
   }
 
+  void _reportAutoOffset() {
+    if (!_autoOffsetPending || !mounted || !_controller.hasClients) return;
+    _autoOffsetPending = false;
+    widget.onOffset(_charAtTop());
+  }
+
   bool? _autoStep(double dy) {
     if (!mounted || !_controller.hasClients) return null;
     final pos = _controller.position;
@@ -235,11 +244,12 @@ class _ScrollBodyState extends State<ScrollBody> {
       return false;
     }
     final next = (pos.pixels + dy).clamp(0.0, pos.maxScrollExtent);
-    _controller.jumpTo(next);
+    _jumpWithoutReporting(next);
+    _autoOffsetPending = true;
     final now = DateTime.now();
     if (now.difference(_lastAutoReport) >= const Duration(milliseconds: 500) || next >= pos.maxScrollExtent - 1.5) {
       _lastAutoReport = now;
-      widget.onOffset(_charAtTop());
+      _reportAutoOffset();
     }
     if (next >= pos.maxScrollExtent - 1.5) {
       widget.onEnd();
@@ -257,6 +267,7 @@ class _ScrollBodyState extends State<ScrollBody> {
       ..prev = (() => _page(-1))
       ..scrollBy = _nudge
       ..autoScrollStep = _autoStep
+      ..reportAutoOffset = _reportAutoOffset
       ..toPage = null
       ..toFraction = ((f) {
         if (_controller.hasClients) _controller.jumpTo(f.clamp(0.0, 1.0) * _controller.position.maxScrollExtent);
@@ -278,6 +289,7 @@ class _ScrollBodyState extends State<ScrollBody> {
   @override
   void dispose() {
     _restoreToken++;
+    if (widget.nav?.reportAutoOffset == _reportAutoOffset) widget.nav?.reportAutoOffset = null;
     widget.highlight?.removeListener(_onHighlight);
     _mountedBlocks.clear();
     _controller.dispose();
@@ -303,6 +315,47 @@ class _ScrollBodyState extends State<ScrollBody> {
     _nudge(dir * p.viewportDimension * 0.9);
   }
 
+  void _jumpWithoutReporting(double offset) {
+    _internalJump = true;
+    try {
+      _controller.jumpTo(offset);
+    } finally {
+      _internalJump = false;
+    }
+  }
+
+  // 通过 Sliver 的已布局子项识别图片，无需为每张图持有 GlobalKey。
+  RenderSliverMultiBoxAdaptor? get _imageSliver => _imageList.currentContext?.findRenderObject() as RenderSliverMultiBoxAdaptor?;
+
+  void _restoreImage(int index, int token, {double? lower, double? upper}) {
+    if (!mounted || token != _restoreToken || !_controller.hasClients) return;
+    final sliver = _imageSliver;
+    if (sliver == null || sliver.firstChild == null || sliver.geometry == null) return;
+    final pos = _controller.position;
+    final start = sliver.constraints.precedingScrollExtent;
+    final first = sliver.firstChild!;
+    final last = sliver.lastChild!;
+    for (RenderBox? child = first; child != null; child = sliver.childAfter(child)) {
+      if (sliver.indexOf(child) == index) {
+        _jumpWithoutReporting((start + sliver.childScrollOffset(child)!).clamp(0.0, pos.maxScrollExtent));
+        return;
+      }
+    }
+    // 图片高度各异，用最近已布局的图片作为锚点逼近；每次布局后重新读取实际位置。
+    final anchor = index < sliver.indexOf(first) ? first : last;
+    final estimate = start + sliver.childScrollOffset(anchor)! + (index - sliver.indexOf(anchor)) * anchor.size.height;
+    if (index < sliver.indexOf(first)) {
+      upper = pos.pixels;
+    } else {
+      lower = pos.pixels;
+    }
+    final guess = lower != null && upper != null ? (lower + upper) / 2 : estimate;
+    final target = guess.clamp(0.0, pos.maxScrollExtent);
+    if ((target - pos.pixels).abs() < 1) return;
+    _jumpWithoutReporting(target);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _restoreImage(index, token, lower: lower, upper: upper));
+  }
+
   void _restore() {
     if (!mounted || !_controller.hasClients) return;
     final max = _controller.position.maxScrollExtent;
@@ -320,9 +373,9 @@ class _ScrollBodyState extends State<ScrollBody> {
       });
       return;
     }
-    if (off > 0 && widget.chapter.text.trim().isEmpty && widget.chapter.images.isNotEmpty && max > 0) {
-      final idx = (off - 1).clamp(0, widget.chapter.images.length - 1);
-      _controller.jumpTo((idx / widget.chapter.images.length * max).clamp(0.0, max));
+    if (off > widget.chapter.text.length && widget.chapter.images.isNotEmpty) {
+      final idx = (off - widget.chapter.text.length - 1).clamp(0, widget.chapter.images.length - 1);
+      _restoreImage(idx, ++_restoreToken);
     } else if (off > 0) {
       _jumpToOffset(off);
     }
@@ -330,17 +383,19 @@ class _ScrollBodyState extends State<ScrollBody> {
   }
 
   int _charAtTop() {
-    if (widget.chapter.text.trim().isEmpty) {
-      if (!_controller.hasClients || widget.chapter.images.isEmpty) return 0;
-      final max = _controller.position.maxScrollExtent;
-      if (max <= 0) return 0;
-      final ratio = (_controller.position.pixels / max).clamp(0.0, 0.9999);
-      return 1 + (ratio * widget.chapter.images.length).floor();
-    }
-    if (_mountedBlocks.isEmpty) return 0;
     final scrollRo = context.findRenderObject();
     if (scrollRo is! RenderBox) return 0;
     final top = scrollRo.localToGlobal(Offset.zero).dy;
+    final sliver = _imageSliver;
+    if (sliver != null && _controller.position.pixels >= sliver.constraints.precedingScrollExtent) {
+      for (RenderBox? child = sliver.firstChild; child != null; child = sliver.childAfter(child)) {
+        if (child.localToGlobal(Offset(0, child.size.height)).dy > top) {
+          return widget.chapter.text.length + 1 + sliver.indexOf(child);
+        }
+      }
+      return widget.chapter.text.length + widget.chapter.images.length;
+    }
+    if (_mountedBlocks.isEmpty) return widget.chapter.images.isEmpty ? 0 : widget.chapter.text.length + 1;
     final indices = _mountedBlocks.keys.toList()..sort();
     for (final idx in indices) {
       final entry = _mountedBlocks[idx]!;
@@ -381,9 +436,14 @@ class _ScrollBodyState extends State<ScrollBody> {
     return NotificationListener<ScrollNotification>(
       onNotification: (n) {
         if (n is ScrollStartNotification && n.dragDetails != null) {
+          _restoreToken++;
           widget.onUserInteract?.call();
-        } else if (n is ScrollEndNotification) {
-          widget.onOffset(_charAtTop());
+        } else if (n is ScrollEndNotification && !_internalJump) {
+          // 跳转与最后一次拖动均可能先通知、后布局；用完成布局的可见子项保存进度。
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) widget.onOffset(_charAtTop());
+          });
+          WidgetsBinding.instance.ensureVisualUpdate();
           if (n.metrics.maxScrollExtent <= 0 || n.metrics.pixels >= n.metrics.maxScrollExtent - 40) widget.onEnd();
         }
         return false;
@@ -466,6 +526,7 @@ class _ScrollBodyState extends State<ScrollBody> {
                   SliverPadding(
                     padding: EdgeInsets.fromLTRB(widget.margin, 0, widget.margin, widget.onNext == null ? bottomPad : 0),
                     sliver: SliverList.builder(
+                      key: _imageList,
                       itemCount: c.images.length,
                       itemBuilder: (context, idx) => Padding(
                         padding: const EdgeInsets.only(top: 16),

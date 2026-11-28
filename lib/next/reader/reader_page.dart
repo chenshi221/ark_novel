@@ -244,6 +244,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   }
 
   void _leaveReader() {
+    _autoScroll.stop();
     if (context.canPop()) {
       context.pop();
     } else {
@@ -267,6 +268,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
         final res = _nav.autoScrollStep?.call(dx);
         return res == null ? AutoScrollStep.unavailable : (res ? AutoScrollStep.scrolled : AutoScrollStep.reachedEnd);
       },
+      onScrollPause: () => _nav.reportAutoOffset?.call(),
       onNextChapter: () {
         final next = _nextChapter;
         if (!mounted || next == null) return false;
@@ -1090,6 +1092,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
       child: PopScope(
         canPop: !_bar,
         onPopInvokedWithResult: (didPop, _) {
+          if (didPop) _autoScroll.stop();
           if (!didPop && _bar) _toggleBar();
         },
         child: Focus(
@@ -1186,7 +1189,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                                     title: _bodyTitle(title),
                                     headingAccent: heading,
                                     startOffset: _offset,
-                                    onOffset: _saveOffset,
+                                    onOffset: (value) {
+                                      if (key.value.$1 == _cid && key.value.$2 == _epoch) _saveOffset(value);
+                                    },
                                     onEnd: _onEnd,
                                     // 全书最后一章滑到底再往后：这卷刚读完就庆祝一下
                                     onNext: next == null ? (_justFinished() == null ? null : () => _celebrate(_justFinished()!, hasNext: false)) : () => _go(next.cid),

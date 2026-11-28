@@ -115,6 +115,7 @@ class ReaderNav {
 
   /// 滚动模式：自动滚屏每帧直接步进像素，返回 true 正在滚 / false 已到底 / null 未就绪
   bool? Function(double)? autoScrollStep;
+  VoidCallback? reportAutoOffset;
 
   /// 翻页模式：当前第几屏（从 0 起）、共几屏，底部进度条用；滚动模式不用
   final page = ValueNotifier<(int, int)>((0, 0));
