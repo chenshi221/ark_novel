@@ -83,6 +83,39 @@ void main() {
     expect(net.urls, hasLength(1));
   });
 
+  test('预取跳过磁盘命中，超过内存预算的原图和缩略图仍可显示并保留已有热图', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final dir = await Directory.systemTemp.createTemp('imgstore_prefetch_disk');
+    addTearDown(() => dir.delete(recursive: true));
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(const MethodChannel('plugins.flutter.io/path_provider'), (_) async => dir.path);
+    final bigGif = Uint8List(13 << 20)..setAll(0, 'GIF89a'.codeUnits);
+    final net = _FakeAdapter((o) async => ResponseBody.fromBytes(o.path.endsWith('big.gif') ? bigGif : _jpeg(2), 200));
+    final c = ProviderContainer(overrides: [imageDioProvider.overrideWithValue(Dio(BaseOptions(responseType: ResponseType.bytes))..httpClientAdapter = net)]);
+    addTearDown(c.dispose);
+    final store = c.read(imageStoreProvider);
+    const prefix = 'https://img.example/';
+    const disk = '${prefix}disk.jpg';
+    const hot = '${prefix}hot.jpg';
+    const big = '${prefix}big.gif';
+    await store.load(disk);
+    store.onMemoryPressure();
+    expect(store.peek(disk), isNull);
+    store.prefetch([disk, '${prefix}a.jpg', '${prefix}b.jpg']);
+    for (var i = 0; i < 300 && (store.peek('${prefix}a.jpg') == null || store.peek('${prefix}b.jpg') == null); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(store.peek('${prefix}a.jpg'), isNotNull);
+    expect(store.peek('${prefix}b.jpg'), isNotNull);
+    expect(store.peek(disk), isNull);
+    expect(net.urls.where((u) => u == disk), hasLength(1));
+    await store.loadThumb(hot);
+    expect((await store.loadThumb(big)).length, bigGif.length);
+    expect(store.peek(big), isNull);
+    expect(store.peekThumb(big), isNull);
+    expect(store.peek(hot), isNotNull);
+    expect(store.peekThumb(hot), isNotNull);
+  });
+
   test('pic.777743.xyz 下载失败时自动回退到 pic.wenku8.com，并按原地址缓存', () async {
     TestWidgetsFlutterBinding.ensureInitialized();
     final dir = await Directory.systemTemp.createTemp('imgstore_fallback');

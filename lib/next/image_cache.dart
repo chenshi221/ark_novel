@@ -87,7 +87,9 @@ class ImageStore {
   int _running = 0;
   final _highWaiting = <String, Completer<void>>{}; // Map 保持插入顺序，尾部为最新进入视口的等待者（LIFO）
   final _lowWaiting = <String, Completer<void>>{};
-  final _pinned = <String>{}; // 预取的（[prefetch]），页面一闪而过时不因单控件 dispose 取消；可用 [cancelPrefetch] 批量取消
+  final _prefetchQueue = <String>{};
+  int _prefetchWorkers = 0;
+  final _pinned = <String, Object>{}; // 预取的（[prefetch]），页面一闪而过时不因单控件 dispose 取消；可用 [cancelPrefetch] 批量取消
   final _disallowChallenge = <String>{}; // 纯后台预取请求禁止拉起无头 WebView 过盾；一旦有前景订阅接入则解除限制
   Directory? _dir;
   Directory? _thumbDirCache;
@@ -416,16 +418,45 @@ class ImageStore {
     for (final raw in urls) {
       final url = _norm(raw);
       if (raw.isEmpty || _mem.containsKey(url)) continue;
-      if (!_pinned.add(url)) continue;
-      _load(url, lowPriority: true, fromPrefetch: true).whenComplete(() => _pinned.remove(url)).ignore(); // 只下载，放大清晰度等真要显示时再说
+      if (_pinned.containsKey(url)) continue;
+      _pinned[url] = Object();
+      _prefetchQueue.add(url);
+    }
+    while (_prefetchWorkers < 2 && _prefetchQueue.isNotEmpty) {
+      _runPrefetch().ignore();
+    }
+  }
+
+  Future<void> _runPrefetch() async {
+    _prefetchWorkers++;
+    try {
+      while (_prefetchQueue.isNotEmpty) {
+        final url = _prefetchQueue.first;
+        _prefetchQueue.remove(url);
+        final request = _pinned[url];
+        try {
+          // 已离线的插图仅检查存在性，留给进入视口的控件读取、校验与解码。
+          final file = File(p.join((await _cacheDir()).path, _name(url)));
+          if (!await file.exists() && identical(request, _pinned[url])) {
+            await _load(url, lowPriority: true, fromPrefetch: true);
+          }
+        } catch (_) {
+          // 后台预取失败不影响后续插图，显示时仍由正常加载流程报告错误。
+        } finally {
+          if (identical(request, _pinned[url])) _pinned.remove(url);
+        }
+      }
+    } finally {
+      _prefetchWorkers--;
     }
   }
 
   /// 取消尚未开始的预取（传 [urls] 仅取消指定批，不传则取消全部低优预取）；仍有可见控件订阅的图不受影响。
   void cancelPrefetch([Iterable<String>? urls]) {
-    final targets = urls == null ? _pinned.toList() : [for (final u in urls) if (u.isNotEmpty) _norm(u)];
+    final targets = urls == null ? _pinned.keys.toList() : [for (final u in urls) if (u.isNotEmpty) _norm(u)];
     for (final url in targets) {
       _pinned.remove(url);
+      _prefetchQueue.remove(url);
       if ((_inflightRefs[url] ?? 0) > 0 || _highWaiting.containsKey(url)) continue; // 已有可见控件在等这张图，不取消
       _abortInflight(url);
     }
@@ -495,7 +526,7 @@ class ImageStore {
       return;
     }
     _inflightRefs.remove(url);
-    if (_pinned.contains(url)) return;
+    if (_pinned.containsKey(url)) return;
     _abortInflight(url);
   }
 
@@ -596,7 +627,7 @@ class ImageStore {
       _recentNetworkHits.remove(url);
       _touch(file).ignore();
     } else {
-      if (cancelToken.isCancelled || (_cancelled.remove(url) && !_pinned.contains(url))) {
+      if (cancelToken.isCancelled || (_cancelled.remove(url) && !_pinned.containsKey(url))) {
         throw const ImageCancelled();
       }
       List<int>? data;
@@ -679,7 +710,9 @@ class ImageStore {
   }
 
   void _put(String key, Uint8List bytes) {
-    _memUsed += bytes.length - (_mem.remove(key)?.length ?? 0);
+    _memUsed -= _mem.remove(key)?.length ?? 0;
+    if (bytes.length > _memBytes) return;
+    _memUsed += bytes.length;
     _mem[key] = bytes;
     while (_memUsed > _memBytes && _mem.length > 1) {
       _memUsed -= _mem.remove(_mem.keys.first)!.length;
@@ -687,7 +720,9 @@ class ImageStore {
   }
 
   void _putThumb(String key, Uint8List bytes) {
-    _thumbMemUsed += bytes.length - (_thumbMem.remove(key)?.length ?? 0);
+    _thumbMemUsed -= _thumbMem.remove(key)?.length ?? 0;
+    if (bytes.length > _thumbMemBytes) return;
+    _thumbMemUsed += bytes.length;
     _thumbMem[key] = bytes;
     while (_thumbMemUsed > _thumbMemBytes && _thumbMem.length > 1) {
       _thumbMemUsed -= _thumbMem.remove(_thumbMem.keys.first)!.length;
@@ -755,6 +790,7 @@ class ImageStore {
   void notifySrModeChanged() => srVersion.value++;
 
   void dispose() {
+    cancelPrefetch();
     srVersion.removeListener(_onGlobalSrVersion);
     srVersion.dispose();
     for (final n in _srUrlNotifiers.values) {
