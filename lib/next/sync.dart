@@ -226,11 +226,13 @@ class Sync {
   static String? _remoteCacheScope;
   static final _remoteFingerprints = <String, String>{};
   static String? _lastUploadFingerprint;
+  static int _lastUploadedAt = 0;
 
   static void _clearRemoteMetaCache() {
     _remoteCacheScope = null;
     _remoteFingerprints.clear();
     _lastUploadFingerprint = null;
+    _lastUploadedAt = 0;
   }
 
   @visibleForTesting
@@ -248,6 +250,7 @@ class Sync {
     _remoteCacheScope = scope;
     _remoteFingerprints.clear();
     _lastUploadFingerprint = null;
+    _lastUploadedAt = 0;
     final stored = await MetaCache.getMetaOnlyMap(_etagMetaKey);
     if (stored != null && stored['scope'] == scope) {
       final files = stored['files'];
@@ -258,6 +261,7 @@ class Sync {
       }
       final up = stored['uploadFp'];
       if (up is String && up.isNotEmpty) _lastUploadFingerprint = up;
+      _lastUploadedAt = stored['uploadedAt'] as int? ?? 0;
     }
   }
 
@@ -265,6 +269,7 @@ class Sync {
     await MetaCache.putMetaOnlyMap(_etagMetaKey, {
       'scope': scope,
       'files': Map<String, String>.of(_remoteFingerprints),
+      'uploadedAt': _lastUploadedAt,
       if (_lastUploadFingerprint != null) 'uploadFp': _lastUploadFingerprint,
     });
   }
@@ -453,11 +458,13 @@ class Sync {
             lastSync > 0 &&
             ownExistsRemotely &&
             !avatarPending &&
+            _lastUploadedAt > DateTime.now().subtract(const Duration(days: SyncMerge.tombDays ~/ 2)).millisecondsSinceEpoch &&
             _lastUploadFingerprint != null &&
             _lastUploadFingerprint == encoded.fingerprint;
         if (!canSkipPut) {
           await client.putJson('$deviceId.json', encoded.json);
           _lastUploadFingerprint = encoded.fingerprint;
+          _lastUploadedAt = snap['at'] as int;
           metaDirty = true;
         }
       }

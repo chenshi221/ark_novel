@@ -139,6 +139,23 @@ void main() {
     expect(await Sync.pullOnly(dio: dio), 0);
   });
 
+  test('无变化的快照到期前重新 PUT，成功后继续复用缓存', () async {
+    await MetaCache.open();
+    await box.put('sync:device', 'dLocal');
+    final adapter = fixedDav({});
+    final dio = mockDio(adapter);
+    await Sync.run(dio: dio);
+    final meta = (await MetaCache.getMetaOnlyMap('sync_meta:etags'))!;
+    await MetaCache.putMetaOnlyMap('sync_meta:etags', {...meta, 'uploadedAt': DateTime.now().subtract(const Duration(days: 89)).millisecondsSinceEpoch});
+    Sync.resetMemoryCache();
+    adapter.requests.clear();
+    await Sync.run(dio: dio, skipUnchangedUpload: true);
+    expect(adapter.requests.where((req) => req.method == 'PUT'), hasLength(1));
+    adapter.requests.clear();
+    await Sync.run(dio: dio, skipUnchangedUpload: true);
+    expect(adapter.requests.where((req) => req.method == 'PUT'), isEmpty);
+  });
+
   test('WebDavClient.ensureDirectory 404 时逐级 MKCOL 创建嵌套目录，且不关闭外部注入 Dio', () async {
     final created = <String>{};
     final adapter = _MockAdapter((req) async {
