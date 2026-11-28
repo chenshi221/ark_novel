@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
@@ -11,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../models/cat_chapter.dart';
 import '../models/cat_volume.dart';
 import '../models/content.dart';
 import 'cache.dart';
@@ -54,6 +56,33 @@ Uint8List _encodeInIsolate(
   );
 }
 
+/// 写完一章后编码器才请求下一章，限制解压正文和内存插图的在途大小。
+class _RequestedVolume implements ExportVolumeSource {
+  const _RequestedVolume(this.title, this.chapterCount, this.index, this.requests);
+
+  @override
+  final String title;
+  @override
+  final int chapterCount;
+  final int index;
+  final SendPort requests;
+
+  @override
+  Stream<EpubChapterData> readChapters() async* {
+    for (var i = 0; i < chapterCount; i++) {
+      final reply = ReceivePort();
+      try {
+        requests.send((index, i, reply.sendPort));
+        final chapter = await reply.first;
+        if (chapter is String) throw FormatException(chapter);
+        if (chapter is EpubChapterData) yield chapter;
+      } finally {
+        reply.close();
+      }
+    }
+  }
+}
+
 Future<void> _encodeToFileInIsolate(
   ({
     ExportFormat format,
@@ -63,10 +92,15 @@ Future<void> _encodeToFileInIsolate(
     String description,
     String? coverPath,
     Uint8List? coverBytes,
-    List<EpubVolumeData> volumes,
+    List<({String title, int count})> directory,
+    SendPort requests,
   })
   args,
 ) {
+  final volumes = [
+    for (var i = 0; i < args.directory.length; i++)
+      _RequestedVolume(args.directory[i].title, args.directory[i].count, i, args.requests),
+  ];
   if (args.format == ExportFormat.epub) {
     return EpubBuilder.buildToFile(
       args.outputPath,
@@ -75,7 +109,7 @@ Future<void> _encodeToFileInIsolate(
       description: args.description,
       coverPath: args.coverPath,
       coverBytes: args.coverBytes,
-      volumes: args.volumes,
+      volumes: volumes,
     );
   }
   return TxtBuilder.buildToFile(
@@ -83,7 +117,7 @@ Future<void> _encodeToFileInIsolate(
     title: args.title,
     author: args.author,
     description: args.description,
-    volumes: args.volumes,
+    volumes: volumes,
   );
 }
 
@@ -174,8 +208,7 @@ class ExportBook {
     return null;
   }
 
-  /// 原生端流式导出：主 Isolate 仅收集章节正文与本地图片磁盘路径，
-  /// 在后台 Isolate 中通过 `ZipFileEncoder` / 流式文件写入直接输出到目标路径（默认临时目录），避免百兆级 OOM。
+  /// 原生端边读边写，主 Isolate 只保留目录和当前请求的章节，后台 Isolate 编码输出文件。
   static Future<ExportFileResult> buildToFile({
     required String aid,
     required NovelPage novel,
@@ -187,7 +220,12 @@ class ExportBook {
     void Function(String stage, double? progress)? onProgress,
   }) async {
     final shownTitle = LibraryStore.shown(aid, novel.detail.title);
-    final total = availableCount(aid, novel.catalogue, onlyCids: onlyCids);
+    final volumes = <({String title, List<CatChapter> chapters})>[];
+    for (final volume in novel.catalogue) {
+      final chapters = volume.chapters.where((c) => (onlyCids == null || onlyCids.contains(c.cid)) && ChapterCache.has(aid, c.cid)).toList();
+      if (chapters.isNotEmpty) volumes.add((title: volume.title, chapters: chapters));
+    }
+    final total = volumes.fold<int>(0, (sum, v) => sum + v.chapters.length);
     if (total == 0) {
       throw const FormatException('所选范围内没有可导出的已缓存章节');
     }
@@ -211,77 +249,73 @@ class ExportBook {
       }
     }
 
-    final volumes = <EpubVolumeData>[];
     var collected = 0;
     var imageCount = 0;
     final progressClock = Stopwatch()..start();
     var lastProgressMs = -100;
-
-    for (final v in novel.catalogue) {
-      final chList = <EpubChapterData>[];
-      for (final c in v.chapters) {
-        if (onlyCids != null && !onlyCids.contains(c.cid)) continue;
-        if (!ChapterCache.has(aid, c.cid)) continue;
-        final Content? content = await ChapterCache.get(aid, c.cid);
-        if (content == null) continue;
-
-        final imageFiles = <EpubImageFile>[];
-        if (format == ExportFormat.epub && content.images.isNotEmpty) {
+    final requests = ReceivePort();
+    requests.listen((message) async {
+      final (vi, ci, reply) = message as (int, int, SendPort);
+      try {
+        final chapter = volumes[vi].chapters[ci];
+        final content = await ChapterCache.get(aid, chapter.cid);
+        if (content == null) {
+          if (collected == 0 && vi == volumes.length - 1 && ci == volumes[vi].chapters.length - 1) {
+            throw const FormatException('未能读取到已缓存章节内容');
+          }
+          reply.send(null);
+          return;
+        }
+        final images = <EpubImageFile>[];
+        if (format == ExportFormat.epub) {
           for (var i = 0; i < content.images.length; i++) {
-            final url = content.images[i];
-            final resolved = await _resolveCachedImage(imageStore, imgCacheDir, url);
-            if (resolved != null) {
-              imageFiles.add(EpubImageFile(name: 'img_$i', path: resolved.path, bytes: resolved.bytes));
-              imageCount++;
-            }
+            final resolved = await _resolveCachedImage(imageStore, imgCacheDir, content.images[i]);
+            if (resolved != null) images.add(EpubImageFile(name: 'img_$i', path: resolved.path, bytes: resolved.bytes));
           }
         }
-
-        chList.add(EpubChapterData(title: c.title, text: content.text, imageFiles: imageFiles));
+        imageCount += images.length;
         collected++;
         final nowMs = progressClock.elapsedMilliseconds;
         if (collected == 1 || collected == total || nowMs - lastProgressMs >= 100) {
           lastProgressMs = nowMs;
-          onProgress?.call('正在收集章节 $collected / $total…', (collected / total) * 0.75);
+          onProgress?.call('正在收集章节 $collected / $total…', collected / total);
         }
+        reply.send(EpubChapterData(title: chapter.title, text: content.text, imageFiles: images));
+      } catch (error) {
+        reply.send(error is FormatException ? error.message : error.toString());
       }
-      if (chList.isNotEmpty) {
-        volumes.add(EpubVolumeData(title: v.title, chapters: chList));
-      }
-    }
-
-    if (volumes.isEmpty) {
-      throw const FormatException('未能读取到已缓存章节内容');
-    }
-
+    });
     final ext = format == ExportFormat.epub ? 'epub' : 'txt';
     final mime = format == ExportFormat.epub ? 'application/epub+zip' : 'text/plain';
     final fileName = '${sanitizeFileName(shownTitle)}.$ext';
-    final targetPath = outputPath ?? p.join((await getTemporaryDirectory()).path, fileName);
+    try {
+      final targetPath = outputPath ?? p.join((await getTemporaryDirectory()).path, fileName);
+      await compute(
+        _encodeToFileInIsolate,
+        (
+          format: format,
+          outputPath: targetPath,
+          title: shownTitle,
+          author: novel.detail.author == '未知作者' ? '' : novel.detail.author,
+          description: novel.detail.introduce,
+          coverPath: coverPath,
+          coverBytes: coverBytes,
+          directory: [for (final v in volumes) (title: v.title, count: v.chapters.length)],
+          requests: requests.sendPort,
+        ),
+      );
+      onProgress?.call('正在准备导出…', 1.0);
 
-    onProgress?.call(format == ExportFormat.epub ? '正在打包 EPUB 文件…' : '正在生成 TXT 文件…', 0.85);
-    await compute(
-      _encodeToFileInIsolate,
-      (
-        format: format,
-        outputPath: targetPath,
-        title: shownTitle,
-        author: novel.detail.author == '未知作者' ? '' : novel.detail.author,
-        description: novel.detail.introduce,
-        coverPath: coverPath,
-        coverBytes: coverBytes,
-        volumes: volumes,
-      ),
-    );
-    onProgress?.call('正在准备导出…', 1.0);
-
-    return (
-      filePath: targetPath,
-      fileName: fileName,
-      mimeType: mime,
-      chapterCount: collected,
-      imageCount: imageCount,
-    );
+      return (
+        filePath: targetPath,
+        fileName: fileName,
+        mimeType: mime,
+        chapterCount: collected,
+        imageCount: imageCount,
+      );
+    } finally {
+      requests.close();
+    }
   }
 
   /// 收集已缓存章节与本地图片，在独立 isolate 中编码生成 EPUB / TXT 字节（原生端复用流式文件生成避免内存峰值）。
