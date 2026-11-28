@@ -238,7 +238,10 @@ class Sync {
     _clearRemoteMetaCache();
   }
 
-  static String _currentScope() => '${url.replaceFirst(RegExp(r'/+$'), '')}|$user|$folder|$deviceId';
+  static String _currentScope() => jsonEncode([
+    url.replaceFirst(RegExp(r'/+$'), ''), user, folder, deviceId, _box.get('sync:restoreGeneration') ?? 0,
+    AppPrefs.read(P.syncShelfPrefs, false), AppPrefs.read(P.syncReaderPrefs, false), AppPrefs.read(P.syncAppearance, false), AppPrefs.read(P.syncAvatar, true),
+  ]);
 
   static Future<void> _ensureRemoteMetaLoaded(String scope) async {
     if (_remoteCacheScope == scope) return;

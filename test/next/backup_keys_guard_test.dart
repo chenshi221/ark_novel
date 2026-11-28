@@ -19,6 +19,7 @@ void main() {
       'sync:folder',
       'sync:device',
       'sync:last',
+      'sync:restoreGeneration',
       'lib:ops',
       'cf:www.wenku8.cc',
       'cf:ts:www.wenku8.cc',
