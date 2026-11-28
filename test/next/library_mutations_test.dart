@@ -28,6 +28,7 @@ class _Api extends Api {
   final removes = <String>[];
   final shelves = <int>[];
   List<BookshelfNovelInfo> books = [];
+  final otherShelves = <int, List<BookshelfNovelInfo>>{};
   Exception? addError;
   Exception? removeError;
   Future<void> Function()? onShelf;
@@ -36,7 +37,7 @@ class _Api extends Api {
   Future<Bookshelf> bookshelf(int classId, {bool fresh = false}) async {
     shelves.add(classId);
     await onShelf?.call();
-    return Bookshelf(classId: '$classId', list: classId == 0 ? books : []);
+    return Bookshelf(classId: '$classId', list: classId == 0 ? books : otherShelves[classId] ?? []);
   }
 
   @override
@@ -273,6 +274,23 @@ void main() {
     expect(api.adds, ['1']);
     expect(box.get('lib:ops'), isEmpty);
     expect(library().state.books.keys, ['1']);
+  });
+
+  test('已同步的书移入原本为空的分组：后台补扫保留改名和分类，不写删除墓碑', () async {
+    await box.putAll({
+      'lib:imported': loggedIn.user.uid,
+      'lib:shelves': {'uid': loggedIn.user.uid, 'ids': [0]},
+      'lib:books': {'1': const LibBook(aid: '1', title: 'one', img: '', bid: 'bid1', cats: ['fav'], name: '我的书').toMap()},
+    });
+    api.books = [remote('2', 'bid2')];
+    api.otherShelves[4] = [remote('1', 'bid1')];
+    login();
+    expect(await library().sync(details: false, shelfDelay: Duration.zero), isNull);
+    expect(api.shelves, [0, 1, 2, 3, 4, 5]);
+    expect(library().state.books['1']?.name, '我的书');
+    expect(library().state.books['1']?.cats, ['fav']);
+    expect((box.get('lib:shelves') as Map)['ids'], [0, 4]);
+    expect((box.get('sync:tomb') as Map?)?['lib:1'], isNull);
   });
 
   test('后台定时 sync 仅扫描曾有书的远程书架（默认从 6 请求降至 1 请求），手动 force 仍扫全部 6 书架', () async {

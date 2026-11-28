@@ -98,7 +98,9 @@ typedef RemoteBook = ({String bid, String title, String img, int shelf});
 /// - 网站上有、本地没有、也不是本地刚移出的：加进本地；首次导入时网站书架 2~6 的书放进同名分类（`shelfN`）
 /// - 本地同步过（有 bid）、网站上没了、也不是本地刚加入的：说明在网站上被移出了，本地也移出
 /// - 网站整个是空的：多半是页面不对，不按它删本地的书
-Map<String, LibBook> reconcile(Map<String, LibBook> local, Map<String, RemoteBook> remote, Map<String, String> ops, {required int now, bool firstImport = false}) {
+Map<String, LibBook> reconcile(Map<String, LibBook> local, Map<String, RemoteBook> remote, Map<String, String> ops, {
+  required int now, bool firstImport = false, bool complete = true,
+}) {
   final out = <String, LibBook>{};
   for (final stored in local.values) {
     // 首次对当前账号：旧账号的 bid 不能用来判断这本书已从网站移出。
@@ -106,7 +108,7 @@ Map<String, LibBook> reconcile(Map<String, LibBook> local, Map<String, RemoteBoo
     final r = remote[b.aid];
     if (r != null) {
       out[b.aid] = b.copyWith(bid: r.bid, img: b.img.isEmpty ? r.img : null);
-    } else if (b.bid == null || remote.isEmpty || ops[b.aid] == 'add') {
+    } else if (b.bid == null || !complete || remote.isEmpty || ops[b.aid] == 'add') {
       out[b.aid] = b;
     }
   }
@@ -387,7 +389,7 @@ class LibraryController extends Notifier<LibraryState> {
 
   /// 推送排队的操作。[remote] 不为空时据此跳过网站上已经是那样的、补上缺的 bid，并把结果写回 [remote]。
   /// 加入被网站明确拒绝（例如书架满了）：书只留在本地；删除失败、登录失效或网络问题：保留操作，下次重试。
-  Future<String?> _flush(Api api, Map<String, RemoteBook>? remote, String uid) async {
+  Future<String?> _flush(Api api, Map<String, RemoteBook>? remote, String uid, {bool complete = true}) async {
     final done = <String, Object?>{}; // 处理完的 aid → 当时的操作
     String? error;
     try {
@@ -398,6 +400,7 @@ class LibraryController extends Notifier<LibraryState> {
           if (op['op'] == 'add') {
             if (remote == null || !remote.containsKey(aid)) await api.addToBookshelf(aid);
           } else {
+            if (!complete && remote != null && !remote.containsKey(aid)) continue; // 增量拉取不能确认这本书已经删除
             final bid = remote?[aid]?.bid ?? op['bid'] as String?;
             if (bid == null) {
               if (remote == null) continue; // 不知道 bid：等下次拉到网站书架再说
@@ -465,7 +468,7 @@ class LibraryController extends Notifier<LibraryState> {
       if (!_sameAccount(s.user.uid)) return null;
       final api = ref.read(apiProvider);
       final remote = <String, RemoteBook>{};
-      final shelvesToScan = _shelvesForSync(s.user.uid, fullScan: first || force);
+      final shelvesToScan = [..._shelvesForSync(s.user.uid, fullScan: first || force)];
       final nonEmptyShelves = <int>{0};
       for (var i = 0; i < shelvesToScan.length; i++) {
         final shelf = shelvesToScan[i];
@@ -477,8 +480,14 @@ class LibraryController extends Notifier<LibraryState> {
         for (final b in shelfBooks) {
           remote.putIfAbsent(b.aid, () => (bid: b.bid, title: b.title, img: b.img, shelf: shelf));
         }
+        if (i + 1 == shelvesToScan.length && shelvesToScan.length < _allShelves.length) {
+          final missingBook = state.books.values.any((book) => book.bid != null && !remote.containsKey(book.aid));
+          final missingRemoval = _ops().entries.any((entry) => entry.value['op'] == 'remove' && !remote.containsKey(entry.key));
+          if (missingBook || missingRemoval) shelvesToScan.addAll(_allShelves.where((id) => !shelvesToScan.contains(id)));
+        }
       }
-      final flushError = await _flush(api, remote, s.user.uid);
+      final complete = shelvesToScan.length == _allShelves.length;
+      final flushError = await _flush(api, remote, s.user.uid, complete: complete);
       // 网络期间账号可能已改变，或 WebDAV 已重建书架：旧结果不再对账。
       if (!_sameAccount(s.user.uid)) return null;
       _refresh();
@@ -489,7 +498,7 @@ class LibraryController extends Notifier<LibraryState> {
         cats = [...cats, for (final n in used.toList()..sort()) if (!cats.any((c) => c.id == 'shelf$n')) LibCategory('shelf$n', shelfNames[n])];
       }
       final ops = {for (final e in _ops().entries) e.key: e.value['op'] as String};
-      final next = reconcile(state.books, remote, ops, now: now, firstImport: first);
+      final next = reconcile(state.books, remote, ops, now: now, firstImport: first, complete: complete);
       // 网站上被移除的：记下删除，不然别的设备下次同步又把它带回来
       final removed = [for (final aid in state.books.keys) if (!next.containsKey(aid)) 'lib:$aid'];
       final readAfter = removedButRead(state.books, next, since: since, lastRead: ReadingProgress.lastRead);
