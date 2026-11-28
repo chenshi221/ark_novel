@@ -211,15 +211,22 @@ void main() {
 
     final outPath = p.join(tempDir.path, 'streamed.epub');
     final progressStages = <String>[];
+    var writingDuringCollection = false;
     final built = await ExportBook.buildToFile(
       aid: aid,
       novel: novel,
       format: ExportFormat.epub,
       imageStore: imageStore,
       outputPath: outPath,
-      onProgress: (stage, _) => progressStages.add(stage),
+      onProgress: (stage, _) {
+        progressStages.add(stage);
+        if (stage.contains('1 / 40')) {
+          writingDuringCollection = tempDir.listSync().any((f) => f.path.startsWith('$outPath.') && f.path.endsWith('.tmp'));
+        }
+      },
     );
 
+    expect(writingDuringCollection, isTrue);
     expect(built.filePath, outPath);
     expect(built.chapterCount, 40);
     expect(built.imageCount, 1);
@@ -244,6 +251,22 @@ void main() {
     final byName = {for (final f in archive.files) f.name: f};
     expect(Uint8List.fromList(byName['OEBPS/images/cover.png']!.content as List<int>), equals(_pngBytes()));
     expect(Uint8List.fromList(byName['OEBPS/images/img_0001_001.jpg']!.content as List<int>), equals(_jpegBytes()));
+
+    // 读第二章前失败时，两个文件编码器都应收尾并保留已有目标文件。
+    for (final format in ExportFormat.values) {
+      final previous = File(p.join(tempDir.path, 'previous.${format.name}'))..writeAsStringSync('原文件');
+      await expectLater(
+        ExportBook.buildToFile(
+          aid: aid, novel: novel, format: format, imageStore: imageStore, outputPath: previous.path,
+          onProgress: (stage, _) {
+            if (stage.contains('1 / 40')) throw const FormatException('读取中断');
+          },
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      expect(previous.readAsStringSync(), '原文件');
+      expect(tempDir.listSync().where((f) => f.path.startsWith('${previous.path}.')), isEmpty);
+    }
   });
 
   testWidgets('showExportBookDialog 按卷选择使用懒加载 ListView.builder，多卷时不溢出且支持勾选切换', (tester) async {

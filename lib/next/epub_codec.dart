@@ -24,12 +24,26 @@ class EpubChapterData {
   final List<EpubImageFile> imageFiles;
 }
 
+/// 文件编码器按消费速度取章，调用方只需提供目录条数和逐章数据流。
+abstract interface class ExportVolumeSource {
+  String get title;
+  int get chapterCount;
+  Stream<EpubChapterData> readChapters();
+}
+
 /// 单卷导出数据（卷标题 + 章节列表）。
-class EpubVolumeData {
+class EpubVolumeData implements ExportVolumeSource {
   const EpubVolumeData({required this.title, required this.chapters});
 
+  @override
   final String title;
   final List<EpubChapterData> chapters;
+
+  @override
+  int get chapterCount => chapters.length;
+
+  @override
+  Stream<EpubChapterData> readChapters() => Stream.fromIterable(chapters);
 }
 
 /// 根据图片魔数（或文件名后缀兜底）判断 MIME 类型和扩展名。
@@ -458,7 +472,7 @@ $bodyHtml</body>
     String description = '',
     String? coverPath,
     Uint8List? coverBytes,
-    required List<EpubVolumeData> volumes,
+    required List<ExportVolumeSource> volumes,
     String language = 'zh-CN',
     String? identifier,
     void Function(int done, int total)? onProgress,
@@ -524,16 +538,16 @@ $bodyHtml</body>
         // 5. 章节 XHTML 与插图流式写入
         final nonEmptyVols = [
           for (final v in volumes)
-            if (v.chapters.isNotEmpty) v,
+            if (v.chapterCount > 0) v,
         ];
-        final totalChapters = nonEmptyVols.fold<int>(0, (s, v) => s + v.chapters.length);
+        final totalChapters = nonEmptyVols.fold<int>(0, (s, v) => s + v.chapterCount);
         final tocVolumes = <({String title, List<({String title, String href})> chapters})>[];
 
         var chIndex = 0;
         for (final vol in nonEmptyVols) {
           final volTitle = vol.title.trim().isEmpty ? '正文' : vol.title.trim();
           final volChapters = <({String title, String href})>[];
-          for (final ch in vol.chapters) {
+          await for (final ch in vol.readChapters()) {
             chIndex++;
             final chNum = chIndex.toString().padLeft(4, '0');
             final chId = 'ch_$chNum';
@@ -583,7 +597,7 @@ $bodyHtml</body>
             volChapters.add((title: chTitle, href: chHref));
             onProgress?.call(chIndex, totalChapters);
           }
-          tocVolumes.add((title: volTitle, chapters: volChapters));
+          if (volChapters.isNotEmpty) tocVolumes.add((title: volTitle, chapters: volChapters));
         }
 
         // 6. OEBPS/nav.xhtml
@@ -690,7 +704,7 @@ class TxtBuilder {
     required String title,
     String author = '',
     String description = '',
-    required List<EpubVolumeData> volumes,
+    required List<ExportVolumeSource> volumes,
     void Function(int done, int total)? onProgress,
   }) async {
     final safeTitle = title.trim().isEmpty ? '未命名书籍' : title.trim();
@@ -715,19 +729,21 @@ class TxtBuilder {
 
         final nonEmptyVols = [
           for (final v in volumes)
-            if (v.chapters.isNotEmpty) v,
+            if (v.chapterCount > 0) v,
         ];
-        final totalChapters = nonEmptyVols.fold<int>(0, (s, v) => s + v.chapters.length);
+        final totalChapters = nonEmptyVols.fold<int>(0, (s, v) => s + v.chapterCount);
         var done = 0;
 
         for (final vol in nonEmptyVols) {
           final volTitle = vol.title.trim();
-          if (volTitle.isNotEmpty && (nonEmptyVols.length > 1 || volTitle != '正文')) {
-            sink
-              ..writeln()
-              ..writeln(volTitle);
-          }
-          for (final ch in vol.chapters) {
+          var first = true;
+          await for (final ch in vol.readChapters()) {
+            if (first && volTitle.isNotEmpty && (nonEmptyVols.length > 1 || volTitle != '正文')) {
+              sink
+                ..writeln()
+                ..writeln(volTitle);
+            }
+            first = false;
             done++;
             final chTitle = ch.title.trim();
             sink
@@ -739,6 +755,7 @@ class TxtBuilder {
               if (line.isEmpty) continue;
               sink.writeln('　　$line');
             }
+            await sink.flush();
             onProgress?.call(done, totalChapters);
           }
         }

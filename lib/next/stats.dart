@@ -35,54 +35,17 @@ class ReadingStats {
 
   static Map<String, int> _map(String key) => ((_box.get(key) as Map?) ?? const {}).map((k, v) => MapEntry(k as String, v as int));
 
-  /// 本机的统计加上同步来的其他设备的统计。[key] 是 day / book。
-  static Map<String, int> _total(String key) {
-    final out = _map('stats:$key');
-    for (final s in Sync.otherStats()) {
-      for (final e in ((s[key] as Map?) ?? const {}).entries) {
-        out['${e.key}'] = (out['${e.key}'] ?? 0) + (e.value as int);
-      }
-    }
-    return out;
-  }
+  static Map<String, int> perDay() => ReadingStatsView().perDay();
 
-  /// 日期 → 秒
-  static Map<String, int> perDay() => _total('day');
+  static Map<String, int> perBook() => ReadingStatsView().perBook();
 
-  /// aid → 秒
-  static Map<String, int> perBook() => _total('book');
+  static int get chapters => ReadingStatsView().chapters;
 
-  static int get chapters => ((_box.get('stats:chapters') as int?) ?? 0) + Sync.otherStats().fold(0, (a, s) => a + ((s['chapters'] as int?) ?? 0));
+  static List<String> bookDays(String aid) => ReadingStatsView().bookDays(aid);
 
-  /// 读过这本书的日期（`yyyy-MM-dd`，去重）
-  static List<String> bookDays(String aid) => {
-    ...((_box.get('stats:days:$aid') as List?) ?? const []).cast<String>(),
-    for (final s in Sync.otherStats()) ...(((s['days'] as Map?)?[aid] as List?) ?? const []).cast<String>(),
-  }.toList()..sort();
+  static ({String title, String author, String img})? meta(String aid) => ReadingStatsView().meta(aid);
 
-  /// 书的信息（标题、作者、封面），统计页和阅读报告用。
-  static ({String title, String author, String img})? meta(String aid) {
-    final m = (_box.get('stats:meta') as Map?)?[aid] ?? Sync.otherStats().map((s) => (s['meta'] as Map?)?[aid]).whereType<Map>().firstOrNull;
-    return m is Map ? (title: m['t'] as String, author: (m['a'] as String?) ?? '', img: (m['i'] as String?) ?? '') : null;
-  }
-
-  /// 书名、作者、封面：统计里记的没有时（例如离线时读的），依次从本地书架、阅读历史、离线缓存里找；都没有才显示书号。
-  static ({String title, String author, String img}) info(String aid) {
-    final m = meta(aid);
-    if (m != null && m.title.isNotEmpty) return (title: LibraryStore.shown(aid, m.title), author: m.author, img: m.img);
-    final lib = LibraryStore.get(aid);
-    String? histTitle;
-    String? histImg;
-    if (lib == null) {
-      final rawHist = ((_box.get('history2') as List?) ?? const []).cast<Map>().where((e) => e['aid'] == aid).firstOrNull;
-      histTitle = rawHist?['title'] as String?;
-      histImg = rawHist?['img'] as String?;
-    }
-    final cached = lib == null && histTitle == null ? ChapterCache.metaOf(aid) : null;
-    final title = (lib?['title'] as String?) ?? histTitle ?? cached?.$1;
-    final img = [m?.img, lib?['img'] as String?, histImg, cached?.$3].whereType<String>().where((e) => e.isNotEmpty).firstOrNull ?? '';
-    return (title: LibraryStore.shown(aid, title ?? '书号 $aid'), author: m?.author ?? '', img: img);
-  }
+  static ({String title, String author, String img}) info(String aid) => ReadingStatsView().info(aid);
 
   static Future<void> setMeta(String aid, String title, String author, String img) async {
     if (Incognito.on) return;
@@ -98,34 +61,11 @@ class ReadingStats {
     (k, v) => MapEntry(k as String, (v as Map).map((d, s) => MapEntry(d as String, s as int))),
   );
 
-  /// 每章每天读了多少秒：cid → 日期 → 秒。按卷统计时长、天数用（这个功能加上之后才开始记）。
-  static Map<String, Map<String, int>> chapterSeconds(String aid) {
-    final out = _localChapterSeconds(aid);
-    for (final s in Sync.otherStats()) {
-      final ch = (s['ch'] as Map?)?[aid];
-      if (ch is! Map) continue;
-      for (final ce in ch.entries) {
-        if (ce.value is! Map) continue;
-        final days = out['${ce.key}'] ??= {};
-        for (final de in (ce.value as Map).entries) {
-          if (de.value is int) days['${de.key}'] = (days['${de.key}'] ?? 0) + (de.value as int);
-        }
-      }
-    }
-    return out;
-  }
+  static Map<String, Map<String, int>> chapterSeconds(String aid) => ReadingStatsView().chapterSeconds(aid);
 
-  /// 读过的书 aid（按章记过时长的）
-  static Iterable<String> chapterBooks() => {
-    ..._box.keys.whereType<String>().where((k) => k.startsWith('stats:ch:')).map((k) => k.substring(9)),
-    for (final s in Sync.otherStats()) ...(((s['ch'] as Map?) ?? const {}).keys.map((k) => '$k')),
-  };
+  static Iterable<String> chapterBooks() => ReadingStatsView().chapterBooks();
 
-  /// 日期满足 [inDay] 的那些天里，每本书读了多少秒：aid → 秒。按章记的时长合计，只有本机的、这个功能加上之后的。
-  static Map<String, int> booksOn(bool Function(String day) inDay) => {
-    for (final aid in chapterBooks())
-      if (chapterSeconds(aid).values.expand((d) => d.entries).where((e) => inDay(e.key)).fold(0, (a, e) => a + e.value) case final s when s > 0) aid: s,
-  };
+  static Map<String, int> booksOn(bool Function(String day) inDay) => ReadingStatsView().booksOn(inDay);
 
   /// 删掉一本书的阅读记录，同步时其他设备也删。若删完后已无任何书籍记录，同步清零本地残留章数。
   static Future<void> deleteBook(String aid) async {
@@ -258,4 +198,88 @@ class ReadingStats {
     });
     changes.value++;
   }
+}
+
+/// 一次统计刷新共用一份远端设备列表，逐书汇总时只读取该书的本地键。
+class ReadingStatsView {
+  late final _devices = Sync.otherStats();
+  Box get _box => ReadingStats._box;
+
+  /// 本机的统计加上同步来的其他设备的统计。[key] 是 day / book。
+  Map<String, int> _total(String key) {
+    final out = ReadingStats._map('stats:$key');
+    for (final s in _devices) {
+      for (final e in ((s[key] as Map?) ?? const {}).entries) {
+        out['${e.key}'] = (out['${e.key}'] ?? 0) + (e.value as int);
+      }
+    }
+    return out;
+  }
+
+  /// 日期 → 秒
+  Map<String, int> perDay() => _total('day');
+
+  /// aid → 秒
+  Map<String, int> perBook() => _total('book');
+
+  int get chapters => ((_box.get('stats:chapters') as int?) ?? 0) + _devices.fold(0, (a, s) => a + ((s['chapters'] as int?) ?? 0));
+
+  /// 读过这本书的日期（`yyyy-MM-dd`，去重）
+  List<String> bookDays(String aid) => {
+    ...((_box.get('stats:days:$aid') as List?) ?? const []).cast<String>(),
+    for (final s in _devices) ...(((s['days'] as Map?)?[aid] as List?) ?? const []).cast<String>(),
+  }.toList()..sort();
+
+  /// 书的信息（标题、作者、封面），统计页和阅读报告用。
+  ({String title, String author, String img})? meta(String aid) {
+    final m = (_box.get('stats:meta') as Map?)?[aid] ?? _devices.map((s) => (s['meta'] as Map?)?[aid]).whereType<Map>().firstOrNull;
+    return m is Map ? (title: m['t'] as String, author: (m['a'] as String?) ?? '', img: (m['i'] as String?) ?? '') : null;
+  }
+
+  /// 书名、作者、封面：统计里记的没有时（例如离线时读的），依次从本地书架、阅读历史、离线缓存里找；都没有才显示书号。
+  ({String title, String author, String img}) info(String aid) {
+    final m = meta(aid);
+    if (m != null && m.title.isNotEmpty) return (title: LibraryStore.shown(aid, m.title), author: m.author, img: m.img);
+    final lib = LibraryStore.get(aid);
+    String? histTitle;
+    String? histImg;
+    if (lib == null) {
+      final rawHist = ((_box.get('history2') as List?) ?? const []).cast<Map>().where((e) => e['aid'] == aid).firstOrNull;
+      histTitle = rawHist?['title'] as String?;
+      histImg = rawHist?['img'] as String?;
+    }
+    final cached = lib == null && histTitle == null ? ChapterCache.metaOf(aid) : null;
+    final title = (lib?['title'] as String?) ?? histTitle ?? cached?.$1;
+    final img = [m?.img, lib?['img'] as String?, histImg, cached?.$3].whereType<String>().where((e) => e.isNotEmpty).firstOrNull ?? '';
+    return (title: LibraryStore.shown(aid, title ?? '书号 $aid'), author: m?.author ?? '', img: img);
+  }
+
+  /// 每章每天读了多少秒：cid → 日期 → 秒。按卷统计时长、天数用（这个功能加上之后才开始记）。
+  Map<String, Map<String, int>> chapterSeconds(String aid) {
+    final out = ReadingStats._localChapterSeconds(aid);
+    for (final s in _devices) {
+      final ch = (s['ch'] as Map?)?[aid];
+      if (ch is! Map) continue;
+      for (final ce in ch.entries) {
+        if (ce.value is! Map) continue;
+        final days = out['${ce.key}'] ??= {};
+        for (final de in (ce.value as Map).entries) {
+          if (de.value is int) days['${de.key}'] = (days['${de.key}'] ?? 0) + (de.value as int);
+        }
+      }
+    }
+    return out;
+  }
+
+  /// 读过的书 aid（按章记过时长的）
+  Iterable<String> chapterBooks() => {
+    ..._box.keys.whereType<String>().where((k) => k.startsWith('stats:ch:')).map((k) => k.substring(9)),
+    for (final s in _devices) ...(((s['ch'] as Map?) ?? const {}).keys.map((k) => '$k')),
+  };
+
+  /// 日期满足 [inDay] 的那些天里，每本书读了多少秒：aid → 秒。按章记的时长合计，只有本机的、这个功能加上之后的。
+  Map<String, int> booksOn(bool Function(String day) inDay) => {
+    for (final aid in chapterBooks())
+      if (chapterSeconds(aid).values.expand((d) => d.entries).where((e) => inDay(e.key)).fold(0, (a, e) => a + e.value) case final s when s > 0) aid: s,
+  };
 }

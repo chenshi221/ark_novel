@@ -42,6 +42,7 @@ class Backup {
     'sync:avatarUp',
     'sync:avatarFile',
     'sync:last',
+    'sync:restoreGeneration',
     'sync:passMoved',
     'lib:imported',
     'lib:ops',
@@ -201,6 +202,8 @@ class Backup {
     if (saved['reader_bg:path'] case final String v when v.isNotEmpty) saved['reader_bg:path'] = p.join(supportDir, 'reader_bg', p.basename(v));
     final box = await Hive.openBox('session');
     await box.deleteAll(box.keys.whereType<String>().where((k) => !_isLocal(k)).toList());
+    // 旧 ETag 只证明恢复前已合并过；恢复后重新拉取相同文件。
+    saved['sync:restoreGeneration'] = ((box.get('sync:restoreGeneration') as int?) ?? 0) + 1;
     await box.putAll(saved);
     final own = box.get('sync:device');
     // 恢复的是别的设备（或重装前的本机）的备份：统计记到那台设备名下，和它同步来的统计不会重复相加；

@@ -197,6 +197,7 @@ class _PagedBodyState extends State<PagedBody> {
       ?..next = (() => _step(1))
       ..prev = (() => _step(-1))
       ..autoScrollStep = null
+      ..reportAutoOffset = null
       ..toFraction = null
       ..toPage = _jump;
   }

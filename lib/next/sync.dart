@@ -226,11 +226,13 @@ class Sync {
   static String? _remoteCacheScope;
   static final _remoteFingerprints = <String, String>{};
   static String? _lastUploadFingerprint;
+  static int _lastUploadedAt = 0;
 
   static void _clearRemoteMetaCache() {
     _remoteCacheScope = null;
     _remoteFingerprints.clear();
     _lastUploadFingerprint = null;
+    _lastUploadedAt = 0;
   }
 
   @visibleForTesting
@@ -238,13 +240,17 @@ class Sync {
     _clearRemoteMetaCache();
   }
 
-  static String _currentScope() => '${url.replaceFirst(RegExp(r'/+$'), '')}|$user|$folder|$deviceId';
+  static String _currentScope() => jsonEncode([
+    url.replaceFirst(RegExp(r'/+$'), ''), user, folder, deviceId, _box.get('sync:restoreGeneration') ?? 0,
+    AppPrefs.read(P.syncShelfPrefs, false), AppPrefs.read(P.syncReaderPrefs, false), AppPrefs.read(P.syncAppearance, false), AppPrefs.read(P.syncAvatar, true),
+  ]);
 
   static Future<void> _ensureRemoteMetaLoaded(String scope) async {
     if (_remoteCacheScope == scope) return;
     _remoteCacheScope = scope;
     _remoteFingerprints.clear();
     _lastUploadFingerprint = null;
+    _lastUploadedAt = 0;
     final stored = await MetaCache.getMetaOnlyMap(_etagMetaKey);
     if (stored != null && stored['scope'] == scope) {
       final files = stored['files'];
@@ -255,6 +261,7 @@ class Sync {
       }
       final up = stored['uploadFp'];
       if (up is String && up.isNotEmpty) _lastUploadFingerprint = up;
+      _lastUploadedAt = stored['uploadedAt'] as int? ?? 0;
     }
   }
 
@@ -262,6 +269,7 @@ class Sync {
     await MetaCache.putMetaOnlyMap(_etagMetaKey, {
       'scope': scope,
       'files': Map<String, String>.of(_remoteFingerprints),
+      'uploadedAt': _lastUploadedAt,
       if (_lastUploadFingerprint != null) 'uploadFp': _lastUploadFingerprint,
     });
   }
@@ -306,16 +314,18 @@ class Sync {
   }
 
   /// 对方的头像比本机新才下载，放进快照交给 [merge]；下载失败就当没变，下次再试。
-  static Future<void> _pullAvatar(WebDavClient client, Map<String, dynamic> remote) async {
+  static Future<bool> _pullAvatar(WebDavClient client, Map<String, dynamic> remote) async {
     final a = remote['avatar'];
-    if (kIsWeb || !AppPrefs.read(P.syncAvatar, true) || a is! Map || a['file'] is! String) return;
-    if (((a['ts'] as int?) ?? 0) <= ((_box.get('avatar:ts') as int?) ?? 0)) return;
+    if (kIsWeb || !AppPrefs.read(P.syncAvatar, true) || a is! Map || a['file'] is! String) return true;
+    if (((a['ts'] as int?) ?? 0) <= ((_box.get('avatar:ts') as int?) ?? 0)) return true;
     try {
       final bytes = await client.getBytes(p.basename(a['file'] as String), what: '下载头像');
       a['data'] = base64Encode(bytes);
+      return true;
     } catch (e) {
       debugPrint('下载同步头像失败：$e');
       remote.remove('avatar');
+      return false;
     }
   }
 
@@ -414,10 +424,13 @@ class Sync {
             final remote = await _decodeJsonAsync(text!) as Map<String, dynamic>;
             validateSyncSnapshot(remote);
             if (remote['at'] case final num at when at < SyncMerge.tombCutoff) throw const StaleSnapshotException();
-            await _pullAvatar(client, remote);
+            final avatarLoaded = await _pullAvatar(client, remote);
             await merge(remote);
             merged++;
-            if (fp != null) {
+            final avatar = remote['avatar'];
+            final avatarApplied = avatar is! Map || !AppPrefs.read(P.syncAvatar, true) || kIsWeb ||
+                ((avatar['ts'] as int?) ?? 0) <= ((_box.get('avatar:ts') as int?) ?? 0);
+            if (fp != null && avatarLoaded && avatarApplied && scope == _currentScope()) {
               _remoteFingerprints[name] = fp;
               metaDirty = true;
             }
@@ -445,11 +458,13 @@ class Sync {
             lastSync > 0 &&
             ownExistsRemotely &&
             !avatarPending &&
+            _lastUploadedAt > DateTime.now().subtract(const Duration(days: SyncMerge.tombDays ~/ 2)).millisecondsSinceEpoch &&
             _lastUploadFingerprint != null &&
             _lastUploadFingerprint == encoded.fingerprint;
         if (!canSkipPut) {
           await client.putJson('$deviceId.json', encoded.json);
           _lastUploadFingerprint = encoded.fingerprint;
+          _lastUploadedAt = snap['at'] as int;
           metaDirty = true;
         }
       }

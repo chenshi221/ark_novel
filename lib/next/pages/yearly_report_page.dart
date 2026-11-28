@@ -133,15 +133,16 @@ class YearlySummary {
 
   /// 从本机 Hive 统计与分卷数据实时汇总指定年份。
   static YearlySummary fromStore(int year) {
-    final perDay = ReadingStats.perDay();
-    final perBook = ReadingStats.perBook();
-    final chapterBooks = ReadingStats.chapterBooks().toList();
+    final stats = ReadingStatsView();
+    final perDay = stats.perDay();
+    final perBook = stats.perBook();
+    final chapterBooks = stats.chapterBooks().toList();
     final chapterSecondsByBook = <String, Map<String, Map<String, int>>>{
-      for (final aid in chapterBooks) aid: ReadingStats.chapterSeconds(aid),
+      for (final aid in chapterBooks) aid: stats.chapterSeconds(aid),
     };
     final allAids = {...perBook.keys, ...chapterBooks};
     final fallbackBookDays = <String, List<String>>{
-      for (final aid in allAids) aid: ReadingStats.bookDays(aid),
+      for (final aid in allAids) aid: stats.bookDays(aid),
     };
     final doneVolumes = <(String, int, String, int)>[
       for (final e in Volumes.allDone()) (e.$1, e.$2, e.$3.title, e.$4),
@@ -159,7 +160,7 @@ class YearlySummary {
       perDay: perDay,
       chapterSecondsByBook: chapterSecondsByBook,
       doneVolumes: doneVolumes,
-      bookInfoOf: ReadingStats.info,
+      bookInfoOf: stats.info,
       bookRatingOf: ReadState.rating,
       volumeRatingOf: Volumes.rating,
       fallbackPerBook: perBook,

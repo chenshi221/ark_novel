@@ -4,6 +4,18 @@ name: Check
 on:
   pull_request:
     branches: [main]
+  # 在 main 保存可供后续 PR 恢复的缓存。依赖或构建工具变化时立即刷新。
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/check.yml'
+      - '.github/scripts/pr-platforms.sh'
+      - 'pubspec.lock'
+      - 'android/**/*.gradle.kts'
+      - 'android/gradle.properties'
+      - 'android/gradle/wrapper/gradle-wrapper.properties'
+      - 'macos/Podfile*'
+      - 'windows/**/CMakeLists.txt'
   schedule:
     # 每周一 UTC 03:00 自动执行三端全量编译守卫，防止仅改 lib/ 时遗漏桌面端编译回归
     - cron: '0 3 * * 1'
@@ -42,27 +54,19 @@ jobs:
             exit 1
           fi
 
+      - name: Test platform selection
+        run: bash .github/scripts/test-pr-platforms.sh
+
       - name: Decide which platforms to build
         id: platforms
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          # 手动运行时编译全部平台；PR 只编译改动涉及的平台，依赖变了才全编
+          # main 预热、定时和手动任务都构建三端；PR 按改动选择平台。
           platforms=android,macos,windows
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            files=$(git diff --name-only "$BASE...$HEAD")
-            if ! grep -qx pubspec.lock <<<"$files"; then
-              platforms=
-              grep -qE '^(lib|assets|android)/' <<<"$files" && platforms+=android,
-              grep -q '^macos/' <<<"$files" && platforms+=macos,
-              grep -q '^windows/' <<<"$files" && platforms+=windows,
-              # 改动涉及平台适配、网络适配器、安全存储、字体、TTS 或导出文件流时，同步触发桌面端编译守卫
-              if grep -qE '^lib/next/(net_|session\.dart|web_fetch\.dart|security\.dart|fonts\.dart|export_book\.dart|reader/reader_tts\.dart)' <<<"$files"; then
-                [[ "$platforms" == *macos* ]] || platforms+=macos,
-                [[ "$platforms" == *windows* ]] || platforms+=windows,
-              fi
-            fi
+            platforms=$(bash .github/scripts/pr-platforms.sh "$BASE" "$HEAD")
           fi
           echo "platforms=$platforms" | tee -a "$GITHUB_OUTPUT"
 
@@ -119,8 +123,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         if: matrix.platform == 'android' && contains(needs.preflight.outputs.platforms, matrix.platform)
-        with:
-          cache-read-only: false
+        # 默认仅允许默认分支写入 Gradle 缓存，PR 直接复用。
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         if: contains(needs.preflight.outputs.platforms, matrix.platform)

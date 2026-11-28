@@ -141,7 +141,7 @@ class _StatsPageState extends ConsumerState<StatsPage> {
   }
 
   /// 最近读的几本还没读完的书：读到的那卷（读完了就看下一卷）还剩几章、大概还要多久
-  List<_Reading> _reading(Map<String, Map<String, Map<String, int>>> chapterSecsByBook, int? pace) {
+  List<_Reading> _reading(Map<String, Map<String, Map<String, int>>> chapterSecsByBook, int? pace, ReadingStatsView stats) {
     final out = <_Reading>[];
     final seen = <String>{};
     for (final h in ReadingHistory.all()) {
@@ -160,7 +160,7 @@ class _StatsPageState extends ConsumerState<StatsPage> {
       final v = vols[vi];
       final bookCh = chapterSecsByBook[h.aid];
       final per = (bookCh == null ? null : secondsPerChapter(bookCh.values)) ?? pace;
-      final info = ReadingStats.info(h.aid);
+      final info = stats.info(h.aid);
       out.add((
         aid: h.aid,
         title: info.title,
@@ -180,9 +180,10 @@ class _StatsPageState extends ConsumerState<StatsPage> {
     final key = (ReadingStats.changes.value, volVersion, todayKey, _reloadEpoch);
     if (_snapshot != null && _cacheKey == key) return _snapshot!;
 
-    final perDay = ReadingStats.perDay();
-    final perBook = ReadingStats.perBook();
-    final chapters = ReadingStats.chapters;
+    final stats = ReadingStatsView();
+    final perDay = stats.perDay();
+    final perBook = stats.perBook();
+    final chapters = stats.chapters;
     final total = perDay.values.fold(0, (a, b) => a + b);
     final today = perDay[todayKey] ?? 0;
     final weekSum = [for (var i = 0; i < 7; i++) perDay[ReadingStats.dayKey(DateTime(now.year, now.month, now.day - i))] ?? 0].fold(0, (a, b) => a + b);
@@ -191,8 +192,8 @@ class _StatsPageState extends ConsumerState<StatsPage> {
     final topMeta = <String, ({String title, String img, int days, int readCount})>{
       for (final e in top.take(10))
         e.key: () {
-          final info = ReadingStats.info(e.key);
-          return (title: info.title, img: info.img, days: ReadingStats.bookDays(e.key).length, readCount: ReadState.readView(e.key).length);
+          final info = stats.info(e.key);
+          return (title: info.title, img: info.img, days: stats.bookDays(e.key).length, readCount: ReadState.readView(e.key).length);
         }(),
     };
 
@@ -200,8 +201,8 @@ class _StatsPageState extends ConsumerState<StatsPage> {
     final chapterSecsByBook = <String, Map<String, Map<String, int>>>{};
     final dayToBooks = <String, Map<String, int>>{};
     final speedSamples = <(int, int)>[];
-    for (final aid in ReadingStats.chapterBooks()) {
-      final ch = ReadingStats.chapterSeconds(aid);
+    for (final aid in stats.chapterBooks()) {
+      final ch = stats.chapterSeconds(aid);
       chapterSecsByBook[aid] = ch;
       final readSet = ReadState.readView(aid);
       for (final ce in ch.entries) {
@@ -218,7 +219,7 @@ class _StatsPageState extends ConsumerState<StatsPage> {
       }
     }
     final pace = secondsPerChapter(chapterSecsByBook.values.expand((m) => m.values));
-    final reading = _reading(chapterSecsByBook, pace);
+    final reading = _reading(chapterSecsByBook, pace, stats);
     final doneYear = Volumes.allDone().where((e) => DateTime.fromMillisecondsSinceEpoch(e.$4).year == now.year).toList();
     final perMonth = List.filled(12, 0);
     for (final e in doneYear) {
@@ -827,6 +828,7 @@ class _DurationChartCardState extends State<_DurationChartCard> {
     final labelH = math.max(20.0, MediaQuery.textScalerOf(context).scale(16));
     final picked = _picked != null && _picked! < bars.length ? bars[_picked!] : null;
     final from = bars.first.$4;
+    final stats = ReadingStatsView();
     final booksInRange = widget.snap.booksMatching((d) => picked != null ? d.startsWith(picked.$4) : d.compareTo(from) >= 0);
 
     return Column(
@@ -960,7 +962,7 @@ class _DurationChartCardState extends State<_DurationChartCard> {
                 padding: const EdgeInsets.symmetric(vertical: 5),
                 child: Row(
                   children: [
-                    Expanded(child: Text(ReadingStats.info(e.key).title, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    Expanded(child: Text(stats.info(e.key).title, maxLines: 1, overflow: TextOverflow.ellipsis)),
                     const SizedBox(width: 12),
                     Text(_duration(e.value), style: muted),
                   ],
@@ -1001,7 +1003,8 @@ class _ManageStatsPageState extends State<_ManageStatsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final books = ReadingStats.perBook().entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    final stats = ReadingStatsView();
+    final books = stats.perBook().entries.toList()..sort((a, b) => b.value.compareTo(a.value));
     return Scaffold(
       appBar: AppBar(title: const Text('管理记录')),
       body: contentWidth(
@@ -1009,7 +1012,7 @@ class _ManageStatsPageState extends State<_ManageStatsPage> {
           itemCount: books.length,
           itemBuilder: (context, i) {
             final e = books[i];
-            final title = ReadingStats.info(e.key).title;
+            final title = stats.info(e.key).title;
             return ListTile(
               title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
               subtitle: Text(_duration(e.value)),
@@ -1067,6 +1070,7 @@ class _HeatmapState extends State<_Heatmap> {
     final picked = _picked;
     final pickedKey = picked == null ? null : ReadingStats.dayKey(picked);
     final pickedSec = pickedKey == null ? 0 : (widget.perDay[pickedKey] ?? 0);
+    final stats = ReadingStatsView();
     final pickedBooks = pickedKey == null
         ? const <MapEntry<String, int>>[]
         : ((widget.dayToBooks[pickedKey] ?? const <String, int>{}).entries.toList()..sort((a, b) => b.value.compareTo(a.value)));
@@ -1177,7 +1181,7 @@ class _HeatmapState extends State<_Heatmap> {
                               padding: const EdgeInsets.symmetric(vertical: 4),
                               child: Row(
                                 children: [
-                                  Expanded(child: Text(ReadingStats.info(e.key).title, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                  Expanded(child: Text(stats.info(e.key).title, maxLines: 1, overflow: TextOverflow.ellipsis)),
                                   const SizedBox(width: 12),
                                   Text(_duration(e.value), style: muted),
                                 ],

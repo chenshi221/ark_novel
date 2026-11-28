@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:ark_novel/next/image_cache.dart';
+import 'package:ark_novel/next/reader/auto_scroll.dart';
 import 'package:ark_novel/next/reader/reader_body.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -95,6 +96,59 @@ void main() {
 
     expect(find.text('图片加载失败，点击重试'), findsNothing);
     expect(find.byType(Image), findsOneWidget);
+  });
+
+  testWidgets('混合章节恢复并保存插图索引，自动滚动的进度回调按间隔合并', (t) async {
+    final store = _StubImageStore()..handler = () => Future.error(Exception('offline'));
+    final text = List.generate(60, (i) => '长章第$i段。').join('\n');
+    final mixed = Chapter(text: text, images: List.generate(24, (i) => 'https://img.example/$i.jpg'), marks: const []);
+    final nav = ReaderNav();
+    final offsets = <int>[];
+    final saved = text.length + 1 + 12;
+    await t.pumpWidget(
+      ProviderScope(
+        overrides: [imageStoreProvider.overrideWithValue(store)],
+        child: MaterialApp(
+          home: Scaffold(
+            body: ScrollBody(
+              chapter: mixed,
+              spanOf: (a, b) => TextSpan(text: text.substring(a, b)),
+              style: style,
+              margin: 16,
+              startOffset: saved,
+              onOffset: offsets.add,
+              onEnd: () {},
+              onNext: null,
+              wrap: (w) => w,
+              onTapZone: () {},
+              onMark: (_) {},
+              nav: nav,
+              hasSelection: () => false,
+            ),
+          ),
+        ),
+      ),
+    );
+    await t.pumpAndSettle();
+    offsets.clear();
+    final auto = ReaderAutoScrollController(initialMode: 0, onScrollPause: () => nav.reportAutoOffset!.call())..start();
+    addTearDown(auto.dispose);
+    for (var i = 0; i < 10; i++) {
+      nav.autoScrollStep!(1);
+    }
+    expect(offsets, [saved]);
+    nav.autoScrollStep!(245);
+    await t.pump();
+    auto.pause();
+    expect(offsets, [saved, saved + 1]);
+    auto.resume();
+    nav.autoScrollStep!(245);
+    await t.pump();
+    auto.stop();
+    expect(offsets, [saved, saved + 1, saved + 2]);
+    await t.drag(find.byType(CustomScrollView), const Offset(0, -300));
+    await t.pumpAndSettle();
+    expect(offsets.last, greaterThan(saved));
   });
 
   testWidgets('翻页阅读页：插图失败显示点击重试，点击重试重新加载而不翻页或开菜单', (t) async {

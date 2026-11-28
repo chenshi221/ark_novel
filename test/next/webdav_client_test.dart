@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:ark_novel/next/app_prefs.dart';
+import 'package:ark_novel/next/backup.dart';
+import 'package:ark_novel/next/meta_cache.dart';
 import 'package:ark_novel/next/sync.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -59,7 +62,11 @@ void main() {
     box = await Hive.openBox('session');
   });
 
-  setUp(() => box.clear());
+  setUp(() async {
+    await box.clear();
+    Sync.resetMemoryCache();
+    if (Hive.isBoxOpen(MetaCache.boxName)) await Hive.lazyBox(MetaCache.boxName).clear();
+  });
 
   tearDownAll(() async {
     await Hive.close();
@@ -67,6 +74,87 @@ void main() {
   });
 
   Dio mockDio(_MockAdapter adapter) => Dio(BaseOptions(validateStatus: (s) => s != null && s < 500))..httpClientAdapter = adapter;
+
+  _MockAdapter fixedDav(Map<String, Uint8List> files) => _MockAdapter((req) async {
+    if (req.method == 'PROPFIND') {
+      final rows = files.keys.where((f) => f.endsWith('.json')).map((f) =>
+          '<d:response><d:href>/dav/ArkNovel/$f</d:href><d:propstat><d:prop><d:getetag>fixed</d:getetag></d:prop></d:propstat></d:response>');
+      return _resp(207, body: '<d:multistatus xmlns:d="DAV:">${rows.join()}</d:multistatus>', contentType: 'application/xml');
+    }
+    final name = req.uri.pathSegments.last;
+    if (req.method == 'PUT') {
+      files[name] = req.body;
+      return _resp(201);
+    }
+    final bytes = files[name];
+    return bytes == null ? _resp(404) : _resp(200, bytes: bytes);
+  });
+
+  test('恢复旧备份会重新下载同 ETag 的进度；打开阅读偏好同步也会重放未变快照', () async {
+    await MetaCache.open();
+    await box.put('sync:device', 'dLocal');
+    final support = Directory(p.join(tmp.path, 'restore'))..createSync();
+    final zip = p.join(tmp.path, 'restore.zip');
+    await Backup.pack(zip, Backup.make(), support.path);
+    final adapter = fixedDav({
+      'dOther.json': utf8.encode(jsonEncode({
+        'v': 3, 'at': DateTime.now().millisecondsSinceEpoch, 'device': 'dOther',
+        'progress': {'2': ['c2', 20, 123]},
+        'readerPrefs': {'ts': 42, 'r': {'r.fontSize': 24.0}},
+      })),
+    });
+    final dio = mockDio(adapter);
+    expect(await Sync.pullOnly(dio: dio), 1);
+    expect(box.get('r.fontSize'), isNull);
+    expect(await Sync.pullOnly(dio: dio), 0);
+    await box.close();
+    await Backup.unpack(zip, support.path);
+    await Backup.apply(support.path);
+    box = await Hive.openBox('session');
+    Sync.resetMemoryCache();
+    expect(box.get('progress:2'), isNull);
+    expect(await Sync.pullOnly(dio: dio), 1);
+    expect(box.get('progress:2'), ['c2', 20, 123]);
+    await box.put('p.${P.syncReaderPrefs}', true);
+    expect(await Sync.pullOnly(dio: dio), 1);
+    expect(box.get('r.fontSize'), 24.0);
+    expect(await Sync.pullOnly(dio: dio), 0);
+  });
+
+  test('头像暂时下载失败仍合并进度，下次同 ETag 继续拉取头像', () async {
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final files = {
+      'dOther.json': utf8.encode(jsonEncode({
+        'v': 3, 'at': ts, 'device': 'dOther', 'avatar': {'ts': ts, 'file': 'dOther.avatar', 'ext': '.png'},
+        'progress': {'2': ['c2', 20, 123]},
+      })),
+    };
+    final dio = mockDio(fixedDav(files));
+    expect(await Sync.pullOnly(dio: dio), 1);
+    expect(box.get('progress:2'), ['c2', 20, 123]);
+    expect(box.get('avatar:ts'), isNull);
+    files['dOther.avatar'] = Uint8List.fromList([1, 2, 3]);
+    expect(await Sync.pullOnly(dio: dio), 1);
+    expect(box.get('avatar:ts'), ts);
+    expect(await Sync.pullOnly(dio: dio), 0);
+  });
+
+  test('无变化的快照到期前重新 PUT，成功后继续复用缓存', () async {
+    await MetaCache.open();
+    await box.put('sync:device', 'dLocal');
+    final adapter = fixedDav({});
+    final dio = mockDio(adapter);
+    await Sync.run(dio: dio);
+    final meta = (await MetaCache.getMetaOnlyMap('sync_meta:etags'))!;
+    await MetaCache.putMetaOnlyMap('sync_meta:etags', {...meta, 'uploadedAt': DateTime.now().subtract(const Duration(days: 89)).millisecondsSinceEpoch});
+    Sync.resetMemoryCache();
+    adapter.requests.clear();
+    await Sync.run(dio: dio, skipUnchangedUpload: true);
+    expect(adapter.requests.where((req) => req.method == 'PUT'), hasLength(1));
+    adapter.requests.clear();
+    await Sync.run(dio: dio, skipUnchangedUpload: true);
+    expect(adapter.requests.where((req) => req.method == 'PUT'), isEmpty);
+  });
 
   test('WebDavClient.ensureDirectory 404 时逐级 MKCOL 创建嵌套目录，且不关闭外部注入 Dio', () async {
     final created = <String>{};
