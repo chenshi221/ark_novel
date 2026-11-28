@@ -201,6 +201,17 @@ void main() {
       if (dir.existsSync()) dir.deleteSync(recursive: true);
     });
 
+    test('同一轮统计汇总复用设备数据，下一轮能读到新合并的统计', () async {
+      final box = Hive.box('session');
+      await box.put('sync:stats:device', '{"book":{"A":30},"ch":{"A":{"1":{"2026-01-01":30}}}}');
+      final stats = ReadingStatsView();
+      expect(stats.perBook()['A'], 30);
+      await box.put('sync:stats:device', '{"book":{"A":60},"ch":{"A":{"1":{"2026-01-01":60}}}}');
+      expect(stats.chapterBooks(), contains('A'));
+      expect(stats.chapterSeconds('A')['1']?['2026-01-01'], 30);
+      expect(ReadingStatsView().chapterSeconds('A')['1']?['2026-01-01'], 60);
+    });
+
     testWidgets('StatsPage 展示每日目标环、年度目标进度条与年度报告入口，YearlyReportPage 正常渲染与切年', (t) async {
       final now = DateTime.now();
       final todayKey = ReadingStats.dayKey(now);

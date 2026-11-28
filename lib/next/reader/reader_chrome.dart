@@ -170,8 +170,9 @@ class ReaderPaceSnapshot {
     final hasCache = Hive.isBoxOpen('chapter_index');
     final allChapterDays = <Map<String, int>>[];
     final speedSamples = <(int, int)>[];
-    for (final aid in ReadingStats.chapterBooks()) {
-      final chSecs = ReadingStats.chapterSeconds(aid);
+    final stats = ReadingStatsView();
+    for (final aid in stats.chapterBooks()) {
+      final chSecs = stats.chapterSeconds(aid);
       if (chSecs.isEmpty) continue;
       final read = hasCache ? ReadState.readView(aid) : const <String>{};
       for (final e in chSecs.entries) {
